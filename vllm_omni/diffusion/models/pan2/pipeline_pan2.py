@@ -81,6 +81,8 @@ def get_pan2_post_process_func(od_config: OmniDiffusionConfig) -> Callable[..., 
         output_type: str = "pil",
         sampling_params: OmniDiffusionSamplingParams | None = None,
     ) -> PAN2PostProcessOutput:
+        if sampling_params is not None and sampling_params.output_type is not None:
+            output_type = sampling_params.output_type
         if output_type == "latent":
             return video
         checked_frames = check_video_safety(video) if is_guardrails_enabled(od_config, sampling_params) else None
@@ -113,27 +115,32 @@ class PAN2Pipeline(
 
     def __init__(self, *, od_config: OmniDiffusionConfig, prefix: str = ""):
         super().__init__()
-        if od_config.parallel_config.ring_degree > 1:
+        parallel_config = od_config.parallel_config
+        if parallel_config.ring_degree > 1 or parallel_config.allgather_degree > 1:
             raise NotImplementedError(
-                "PAN2 does not support ring sequence parallel: its padded sequence needs an attention mask, which ring "
-                "attention does not take. Use Ulysses (--usp) and CFG parallelism instead."
+                "PAN2 does not support ring or all-gather sequence parallel: its padded joint video/text sequence "
+                "needs an attention mask they do not carry. Use Ulysses (--usp) and CFG parallelism instead."
             )
         self.od_config = od_config
         self.device = get_local_device()
         dtype = getattr(od_config, "dtype", torch.bfloat16)
 
         model = od_config.model
+        revision = od_config.revision
         local_files_only = os.path.exists(model)
         subfolders = ["tokenizer", "text_encoder", "vae", "scheduler"]
-        prefetch_subfolders(model, subfolders, local_files_only=local_files_only)
+        prefetch_subfolders(model, subfolders, local_files_only=local_files_only, revision=revision)
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model, subfolder="tokenizer", local_files_only=local_files_only)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model, subfolder="tokenizer", local_files_only=local_files_only, revision=revision
+        )
         self.text_encoder = from_pretrained_with_prefetch(
             Qwen3_5TextModel.from_pretrained,
             model,
             subfolder="text_encoder",
             prefetch_list=subfolders,
             local_files_only=local_files_only,
+            revision=revision,
             torch_dtype=dtype,
         ).to(self.device)
         self.vae = from_pretrained_with_prefetch(
@@ -142,10 +149,11 @@ class PAN2Pipeline(
             subfolder="vae",
             prefetch_list=subfolders,
             local_files_only=local_files_only,
+            revision=revision,
             torch_dtype=dtype,
         ).to(self.device)
         self.scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
-            model, subfolder="scheduler", local_files_only=local_files_only
+            model, subfolder="scheduler", local_files_only=local_files_only, revision=revision
         )
         if od_config.flow_shift is not None:
             # The scheduler exposes `shift` as a read-only property.
@@ -167,7 +175,7 @@ class PAN2Pipeline(
             DiffusersPipelineLoader.ComponentSource(
                 model_or_path=od_config.model,
                 subfolder="transformer",
-                revision=None,
+                revision=revision,
                 prefix="transformer.",
                 fall_back_to_pt=True,
             )
@@ -309,6 +317,7 @@ class PAN2Pipeline(
             image = cast(PIL.Image.Image, image).convert("RGB")
 
         sampling_params = req.sampling_params
+        output_type = sampling_params.output_type or output_type
         height = sampling_params.height or height
         width = sampling_params.width or width
         num_frames = resolve_video_num_frames(

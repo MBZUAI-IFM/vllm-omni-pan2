@@ -170,6 +170,15 @@ def test_latent_output_is_not_checked(make_checker):
     assert checker.videos == []
 
 
+def test_request_output_type_latent_is_returned_unchecked(make_checker):
+    checker = make_checker(block_video=True)
+    _pre_process(_od_config())
+    latents = torch.zeros(1, 4, 2, 2, 2)
+    sampling_params = OmniDiffusionSamplingParams(output_type="latent")
+    assert _post_process(_od_config())(latents, sampling_params=sampling_params) is latents
+    assert checker.videos == []
+
+
 def test_server_switch_off_loads_and_checks_nothing(guardrails, monkeypatch: pytest.MonkeyPatch):
     def from_pretrained():
         raise AssertionError("the guardrails must not load when they are disabled")
