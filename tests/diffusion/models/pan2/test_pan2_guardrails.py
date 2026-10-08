@@ -155,14 +155,19 @@ def test_passing_video_is_unchanged_and_checked_as_delivered(make_checker):
         np.testing.assert_array_equal(np.asarray(frame), np.asarray(expected_frame))
 
 
-def test_every_video_of_a_batch_is_checked(make_checker):
+def test_every_video_of_a_batch_is_checked(make_checker, guardrails):
     checker = make_checker()
     _pre_process(_od_config())
-    videos = _post_process(_od_config())(
-        torch.cat([_video(0), _video(1)]), sampling_params=OmniDiffusionSamplingParams()
-    )
+    batch = [_video(0), _video(1)]
+    videos = _post_process(_od_config())(torch.cat(batch), sampling_params=OmniDiffusionSamplingParams())
+
+    # Each video is checked once, in order, as the frames that are delivered for it.
     assert len(checker.videos) == 2
-    assert [len(frames) for frames in videos] == [5, 5]
+    for checked, video, delivered in zip(checker.videos, batch, videos):
+        expected = guardrails.video_to_uint8_frames(video[0])
+        np.testing.assert_array_equal(checked, expected)
+        np.testing.assert_array_equal(np.stack([np.asarray(frame) for frame in delivered]), expected)
+    assert not np.array_equal(checker.videos[0], checker.videos[1])
 
 
 def test_latent_output_is_not_checked(make_checker):

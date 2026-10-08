@@ -133,6 +133,7 @@ def test_load_weights_fuses_qkv_projections(_runtime):
 def test_sp_plan_targets_existing_modules(_runtime):
     model = _model(_runtime)
     module_names = {name for name, _ in model.named_modules()}
+    assert set(model._sp_plan) == {"rope", "proj_out"}
     assert set(model._sp_plan) <= module_names
 
 
