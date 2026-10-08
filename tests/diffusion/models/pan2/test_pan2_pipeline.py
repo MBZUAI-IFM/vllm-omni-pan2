@@ -150,6 +150,32 @@ def test_video_input_is_rejected():
         _generate_latents(_make_pipeline(), prompt=prompt)
 
 
+@pytest.mark.parametrize(
+    ("prompt", "sampling_overrides", "match"),
+    [
+        ("a cat", {"sigmas": [1.0, 0.5]}, "custom `sigmas`/`timesteps` are not supported"),
+        (
+            {"prompt": "a cat", "multi_modal_data": {"video": [PIL.Image.new("RGB", (64, 64))]}},
+            {},
+            "PAN2 does not accept video input",
+        ),
+    ],
+    ids=["sigmas", "video"],
+)
+def test_unsupported_requests_are_rejected_before_dispatch(
+    prompt: OmniPromptType, sampling_overrides: dict[str, Any], match: str
+):
+    # The engine-process pre-process rejects them, so the client error keeps its 4xx status under multi-GPU executors.
+    from vllm_omni.diffusion.models.pan2 import get_pan2_pre_process_func
+
+    pre_process = get_pan2_pre_process_func(OmniDiffusionConfig(model_config={"guardrails": False}))
+    request = OmniDiffusionRequest(
+        prompt=prompt, sampling_params=OmniDiffusionSamplingParams(**sampling_overrides), request_id="pan2-test"
+    )
+    with pytest.raises(OmniClientError, match=match):
+        pre_process(request)
+
+
 @dataclasses.dataclass
 class _FakeLatentDist:
     latents: torch.Tensor

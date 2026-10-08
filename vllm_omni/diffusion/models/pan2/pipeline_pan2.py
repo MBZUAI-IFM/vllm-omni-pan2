@@ -36,7 +36,7 @@ from vllm_omni.diffusion.request import OmniDiffusionRequest, resolve_video_num_
 from vllm_omni.diffusion.utils.tf_utils import get_transformer_config_kwargs
 from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
 from vllm_omni.errors import OmniClientError
-from vllm_omni.inputs.data import OmniDiffusionSamplingParams
+from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniPromptType
 from vllm_omni.platforms import current_omni_platform
 
 logger = init_logger(__name__)
@@ -65,6 +65,9 @@ def get_pan2_pre_process_func(
         ensure_initialized(od_config)
 
     def pre_process_func(request: OmniDiffusionRequest) -> OmniDiffusionRequest:
+        # Reject unsupported requests here, in the engine process: an OmniClientError raised in `forward` on the
+        # workers reaches the client as a 500 under the multi-process executor, which drops its 4xx status.
+        _check_pan2_request(request.sampling_params, request.prompt)
         if is_guardrails_enabled(od_config, request.sampling_params):
             prompt = request.prompt
             check_text_safety(prompt if isinstance(prompt, str) else prompt.get("prompt") or "")
@@ -107,6 +110,17 @@ def _resolve_pan2_num_outputs(value: int) -> int:
     if not 1 <= value <= PAN2_MAX_NUM_OUTPUTS:
         raise OmniClientError(f"PAN2 num_outputs_per_prompt must be in [1, {PAN2_MAX_NUM_OUTPUTS}], got {value}")
     return value
+
+
+def _check_pan2_request(sampling_params: OmniDiffusionSamplingParams, prompt: OmniPromptType) -> None:
+    """Reject the inputs PAN2 does not support."""
+    if sampling_params.sigmas is not None or sampling_params.timesteps is not None:
+        raise OmniClientError(
+            "PAN2 uses its own flow-matching schedule; custom `sigmas`/`timesteps` are not supported."
+        )
+    multi_modal_data = (prompt.get("multi_modal_data") or {}) if isinstance(prompt, dict) else {}
+    if multi_modal_data.get("video") is not None:
+        raise OmniClientError("PAN2 does not accept video input; pass a single first-frame image for image-to-video.")
 
 
 class PAN2Pipeline(
@@ -315,22 +329,15 @@ class PAN2Pipeline(
         if len(req.prompts) != 1:
             raise ValueError("PAN2 takes a single prompt per request.")
         sampling_params = req.sampling_params
-        if sampling_params.sigmas is not None or sampling_params.timesteps is not None:
-            raise OmniClientError(
-                "PAN2 uses its own flow-matching schedule; custom `sigmas`/`timesteps` are not supported."
-            )
         num_outputs = _resolve_pan2_num_outputs(sampling_params.num_outputs_per_prompt or 1)
         prompt_data = req.prompts[0]
+        _check_pan2_request(sampling_params, prompt_data)
         if isinstance(prompt_data, str):
             prompt, negative_prompt, multi_modal_data = prompt_data, None, {}
         else:
             prompt = prompt_data.get("prompt")
             negative_prompt = prompt_data.get("negative_prompt")
             multi_modal_data = prompt_data.get("multi_modal_data") or {}
-        if multi_modal_data.get("video") is not None:
-            raise OmniClientError(
-                "PAN2 does not accept video input; pass a single first-frame image for image-to-video."
-            )
 
         image = multi_modal_data.get("image")
         if isinstance(image, list):
