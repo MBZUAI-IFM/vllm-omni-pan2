@@ -158,8 +158,11 @@ def test_passing_video_is_unchanged_and_checked_as_delivered(make_checker):
 def test_every_video_of_a_batch_is_checked(make_checker):
     checker = make_checker()
     _pre_process(_od_config())
-    _post_process(_od_config())(torch.cat([_video(0), _video(1)]), sampling_params=OmniDiffusionSamplingParams())
+    videos = _post_process(_od_config())(
+        torch.cat([_video(0), _video(1)]), sampling_params=OmniDiffusionSamplingParams()
+    )
     assert len(checker.videos) == 2
+    assert [len(frames) for frames in videos] == [5, 5]
 
 
 def test_latent_output_is_not_checked(make_checker):

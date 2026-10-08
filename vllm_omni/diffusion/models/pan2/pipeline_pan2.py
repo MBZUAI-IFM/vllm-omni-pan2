@@ -35,6 +35,7 @@ from vllm_omni.diffusion.profiler.diffusion_pipeline_profiler import DiffusionPi
 from vllm_omni.diffusion.request import OmniDiffusionRequest, resolve_video_num_frames
 from vllm_omni.diffusion.utils.tf_utils import get_transformer_config_kwargs
 from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
+from vllm_omni.errors import OmniClientError
 from vllm_omni.inputs.data import OmniDiffusionSamplingParams
 from vllm_omni.platforms import current_omni_platform
 
@@ -47,6 +48,7 @@ PAN2_MAX_SEQUENCE_LENGTH = 1536
 PAN2_DEFAULT_HEIGHT = 704
 PAN2_DEFAULT_WIDTH = 1248
 PAN2_DEFAULT_NUM_FRAMES = 313
+PAN2_MAX_NUM_OUTPUTS = 10
 
 # Latents, the frames of one video (PIL images), or the frames as arrays.
 PAN2PostProcessOutput: TypeAlias = torch.Tensor | list[PIL.Image.Image] | np.ndarray | list[np.ndarray]
@@ -91,12 +93,20 @@ def get_pan2_post_process_func(od_config: OmniDiffusionConfig) -> Callable[..., 
             result = [[PIL.Image.fromarray(frame) for frame in frames] for frames in checked_frames]
         else:
             result = video_processor.postprocess_video(video, output_type=output_type)
-        # postprocess_video returns a batch of frame lists; serving expects the frames of the single video.
-        if isinstance(result, list) and result and isinstance(result[0], list):
+        # postprocess_video returns a batch of frame lists; a single video is returned as its frames.
+        if isinstance(result, list) and len(result) == 1 and isinstance(result[0], list):
             result = result[0]
         return result
 
     return post_process_func
+
+
+def _resolve_pan2_num_outputs(value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise OmniClientError(f"PAN2 num_outputs_per_prompt must be an integer in [1, {PAN2_MAX_NUM_OUTPUTS}]")
+    if not 1 <= value <= PAN2_MAX_NUM_OUTPUTS:
+        raise OmniClientError(f"PAN2 num_outputs_per_prompt must be in [1, {PAN2_MAX_NUM_OUTPUTS}], got {value}")
+    return value
 
 
 class PAN2Pipeline(
@@ -230,18 +240,21 @@ class PAN2Pipeline(
 
     def prepare_latents(
         self,
+        batch_size: int,
         height: int,
         width: int,
         num_frames: int,
         device: torch.device,
-        generator: torch.Generator | None,
+        generator: torch.Generator | list[torch.Generator] | None,
         latents: torch.Tensor | None,
     ) -> torch.Tensor:
         # The latents stay in float32 across the denoising loop and are cast to the transformer dtype per step.
         if latents is not None:
+            if latents.shape[0] != batch_size:
+                raise ValueError(f"`latents` must have batch size {batch_size}, got {latents.shape[0]}.")
             return latents.to(device=device, dtype=torch.float32)
         shape = (
-            1,
+            batch_size,
             self.num_channels_latents,
             (num_frames - 1) // self.vae_scale_factor_temporal + 1,
             height // self.vae_scale_factor_spatial,
@@ -252,7 +265,10 @@ class PAN2Pipeline(
     def prepare_condition_latents(
         self, latents: torch.Tensor, image: PIL.Image.Image | None, height: int, width: int
     ) -> torch.Tensor:
-        """Conditioning latents and mask stacked along channels; image-to-video fills the first latent frame."""
+        """Conditioning latents and mask stacked along channels; image-to-video fills the first latent frame.
+
+        The image is encoded once and shared by every video of the batch.
+        """
         batch_size, num_channels, num_frames, latent_height, latent_width = latents.shape
         condition_latents = latents.new_zeros(batch_size, num_channels + 1, num_frames, latent_height, latent_width)
         if image is None:
@@ -293,11 +309,17 @@ class PAN2Pipeline(
         width: int = PAN2_DEFAULT_WIDTH,
         num_frames: int = PAN2_DEFAULT_NUM_FRAMES,
         output_type: str | None = "np",
-        generator: torch.Generator | None = None,
+        generator: torch.Generator | list[torch.Generator] | None = None,
         **kwargs,
     ) -> DiffusionOutput:
         if len(req.prompts) != 1:
             raise ValueError("PAN2 takes a single prompt per request.")
+        sampling_params = req.sampling_params
+        if sampling_params.sigmas is not None or sampling_params.timesteps is not None:
+            raise OmniClientError(
+                "PAN2 uses its own flow-matching schedule; custom `sigmas`/`timesteps` are not supported."
+            )
+        num_outputs = _resolve_pan2_num_outputs(sampling_params.num_outputs_per_prompt or 1)
         prompt_data = req.prompts[0]
         if isinstance(prompt_data, str):
             prompt, negative_prompt, multi_modal_data = prompt_data, None, {}
@@ -305,6 +327,10 @@ class PAN2Pipeline(
             prompt = prompt_data.get("prompt")
             negative_prompt = prompt_data.get("negative_prompt")
             multi_modal_data = prompt_data.get("multi_modal_data") or {}
+        if multi_modal_data.get("video") is not None:
+            raise OmniClientError(
+                "PAN2 does not accept video input; pass a single first-frame image for image-to-video."
+            )
 
         image = multi_modal_data.get("image")
         if isinstance(image, list):
@@ -316,7 +342,6 @@ class PAN2Pipeline(
         if image is not None:
             image = cast(PIL.Image.Image, image).convert("RGB")
 
-        sampling_params = req.sampling_params
         output_type = sampling_params.output_type or output_type
         height = sampling_params.height or height
         width = sampling_params.width or width
@@ -349,16 +374,24 @@ class PAN2Pipeline(
         dtype = self.transformer.x_embedder.weight.dtype
 
         if generator is None:
-            generator = sampling_params.generator
+            # One generator per video: a single request generator draws the videos' noise in turn.
+            generator = req.collate_request_generators(num_outputs, None)
         if generator is None and sampling_params.seed is not None:
             generator = torch.Generator(device=sampling_params.generator_device or device).manual_seed(
                 sampling_params.seed
             )
 
-        prompt_embeds = self.encode_prompt(prompt, device).to(dtype)
-        negative_prompt_embeds = self.encode_prompt(negative_prompt or "", device).to(dtype) if do_cfg else None
+        # The videos share one prompt, so their text embeddings are repeated without padding.
+        prompt_embeds = self.encode_prompt(prompt, device).to(dtype).repeat_interleave(num_outputs, dim=0)
+        negative_prompt_embeds = None
+        if do_cfg:
+            negative_prompt_embeds = (
+                self.encode_prompt(negative_prompt or "", device).to(dtype).repeat_interleave(num_outputs, dim=0)
+            )
 
-        latents = self.prepare_latents(height, width, num_frames, device, generator, sampling_params.latents)
+        latents = self.prepare_latents(
+            num_outputs, height, width, num_frames, device, generator, sampling_params.latents
+        )
         condition_latents = self.prepare_condition_latents(latents, image, height, width).to(dtype)
 
         # PAN2 samples on uniformly spaced sigmas from 1 down to (excluding) 0; the scheduler applies the shift.
@@ -403,7 +436,10 @@ class PAN2Pipeline(
             latents_mean = torch.tensor(self.vae.config.latents_mean).view(1, -1, 1, 1, 1).to(latents)
             latents_std = torch.tensor(self.vae.config.latents_std).view(1, -1, 1, 1, 1).to(latents)
             latents = (latents * latents_std + latents_mean).to(self.vae.dtype)
-            output = self.vae.decode(latents, return_dict=False)[0]
+            # Decode one video at a time, so the VAE peak memory does not grow with the number of videos.
+            output = torch.cat(
+                [self.vae.decode(video_latents, return_dict=False)[0] for video_latents in latents.split(1)]
+            )
 
         return DiffusionOutput(
             output=output,
