@@ -31,6 +31,7 @@ from vllm_omni.diffusion.models.interface import SupportImageInput, SupportsComp
 from vllm_omni.diffusion.models.pan2.pan2_transformer import PAN2Transformer3DModel
 from vllm_omni.diffusion.models.pan2.quality_policy import PAN2_GENERIC_CACHE_KEY, PAN2QualityPolicy
 from vllm_omni.diffusion.models.progress_bar import ProgressBarMixin
+from vllm_omni.diffusion.offloader.offload_plan import OffloadPlan
 from vllm_omni.diffusion.profiler.diffusion_pipeline_profiler import DiffusionPipelineProfilerMixin
 from vllm_omni.diffusion.request import OmniDiffusionRequest, resolve_video_num_frames
 from vllm_omni.diffusion.utils.tf_utils import get_transformer_config_kwargs
@@ -135,6 +136,15 @@ class PAN2Pipeline(
 
     _dit_modules: ClassVar[list[str]] = ["transformer"]
     _encoder_modules: ClassVar[list[str]] = ["text_encoder"]
+    # Distributed layerwise offload: the text refiner streams with the main blocks, and the Qwen3.5 text encoder
+    # streams its layers.
+    _offload_plan: ClassVar[OffloadPlan] = OffloadPlan(
+        block_attrs={"transformer": ("context_refiner", "transformer_blocks")},
+        resident_dit_paths=frozenset({"transformer"}),
+        encoder_component_types={"text_encoder": "text_encoder"},
+        encoder_block_attrs={"text_encoder": ("layers",)},
+        encoder_dlo_weight_replication=frozenset({"text_encoder"}),
+    )
     _vae_modules: ClassVar[list[str]] = ["vae"]
 
     def __init__(self, *, od_config: OmniDiffusionConfig, prefix: str = ""):
