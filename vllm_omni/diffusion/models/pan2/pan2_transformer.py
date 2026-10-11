@@ -7,14 +7,11 @@ from typing import TYPE_CHECKING
 
 import torch
 from cache_dit import ForwardPattern
-from diffusers.models.attention import FeedForward as DiffusersFeedForward
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps, get_1d_rotary_pos_embed
-from diffusers.models.normalization import AdaLayerNormContinuous, AdaLayerNormZero
-from diffusers.models.normalization import RMSNorm as DiffusersRMSNorm
 from torch import nn
 from vllm.logger import init_logger
 from vllm.model_executor.layers.layernorm import RMSNorm
-from vllm.model_executor.layers.linear import QKVParallelLinear, RowParallelLinear
+from vllm.model_executor.layers.linear import MergedColumnParallelLinear, QKVParallelLinear, RowParallelLinear
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 
 from vllm_omni.diffusion.attention.backends.abstract import AttentionMetadata
@@ -26,6 +23,8 @@ from vllm_omni.diffusion.distributed.parallel_state import get_sequence_parallel
 from vllm_omni.diffusion.distributed.sp_plan import SequenceParallelInput, SequenceParallelOutput
 from vllm_omni.diffusion.distributed.sp_sharding import sp_shard_with_padding
 from vllm_omni.diffusion.forward_context import get_forward_context
+from vllm_omni.diffusion.layers.activation import SiluAndMul
+from vllm_omni.diffusion.layers.adalayernorm import AdaLayerNormContinuous, AdaLayerNormZero
 from vllm_omni.diffusion.layers.fused_qk_norm_rope import (
     _fused_cuda_supported,
     fused_qk_norm_rope,
@@ -86,9 +85,9 @@ class PAN2RefinerAttention(nn.Module):
         self.to_q = nn.Linear(dim, heads * dim_head, bias=False)
         self.to_k = nn.Linear(dim, heads * dim_head, bias=False)
         self.to_v = nn.Linear(dim, heads * dim_head, bias=False)
-        self.norm_q = DiffusersRMSNorm(dim_head, eps=eps)
-        self.norm_k = DiffusersRMSNorm(dim_head, eps=eps)
-        self.to_out = nn.ModuleList([nn.Linear(heads * dim_head, dim, bias=False), nn.Identity()])
+        self.norm_q = RMSNorm(dim_head, eps=eps)
+        self.norm_k = RMSNorm(dim_head, eps=eps)
+        self.to_out = nn.Linear(heads * dim_head, dim, bias=False)
         self.attn = Attention(
             num_heads=heads,
             head_size=dim_head,
@@ -110,16 +109,32 @@ class PAN2RefinerAttention(nn.Module):
 
         hidden_states = self.attn(query, key, value, None)
         hidden_states = hidden_states.flatten(2, 3).to(query.dtype)
-        return self.to_out[0](hidden_states)
+        return self.to_out(hidden_states)
+
+
+class PAN2RefinerMLP(nn.Module):
+    """SwiGLU MLP of the token refiner."""
+
+    def __init__(self, dim: int, inner_dim: int) -> None:
+        super().__init__()
+        # Chunk the fused fc1 output as [gate, up], then compute silu(gate) * up.
+        self.fc1 = MergedColumnParallelLinear(dim, [inner_dim, inner_dim], bias=False, gather_output=False)
+        self.act_fn = SiluAndMul()
+        self.fc2 = RowParallelLinear(inner_dim, dim, bias=False, input_is_parallel=True)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        hidden_states, _ = self.fc1(hidden_states)
+        hidden_states, _ = self.fc2(self.act_fn(hidden_states))
+        return hidden_states
 
 
 class PAN2TokenRefinerBlock(nn.Module):
     def __init__(self, dim: int, num_attention_heads: int, attention_head_dim: int, mlp_ratio: float, eps: float):
         super().__init__()
-        self.norm1 = DiffusersRMSNorm(dim, eps=eps)
+        self.norm1 = RMSNorm(dim, eps=eps)
         self.attn = PAN2RefinerAttention(dim, num_attention_heads, attention_head_dim, eps)
-        self.norm2 = DiffusersRMSNorm(dim, eps=eps)
-        self.ff = DiffusersFeedForward(dim, inner_dim=int(dim * mlp_ratio), activation_fn="swiglu", bias=False)
+        self.norm2 = RMSNorm(dim, eps=eps)
+        self.ff = PAN2RefinerMLP(dim, int(dim * mlp_ratio))
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states = hidden_states + self.attn(self.norm1(hidden_states))
@@ -155,19 +170,14 @@ class PAN2Attention(nn.Module):
         )
         self.norm_q = RMSNorm(dim_head, eps=eps)
         self.norm_k = RMSNorm(dim_head, eps=eps)
-        self.to_out = nn.ModuleList(
-            [
-                RowParallelLinear(
-                    heads * dim_head,
-                    dim,
-                    bias=True,
-                    input_is_parallel=True,
-                    return_bias=False,
-                    quant_config=quant_config,
-                    prefix=f"{prefix}.to_out.0",
-                ),
-                nn.Identity(),
-            ]
+        self.to_out = RowParallelLinear(
+            heads * dim_head,
+            dim,
+            bias=True,
+            input_is_parallel=True,
+            return_bias=False,
+            quant_config=quant_config,
+            prefix=f"{prefix}.to_out",
         )
 
         self.add_kv_proj = QKVParallelLinear(
@@ -281,7 +291,7 @@ class PAN2Attention(nn.Module):
         hidden_states, encoder_hidden_states = hidden_states.split_with_sizes(
             [hidden_states.shape[1] - encoder_hidden_states.shape[1], encoder_hidden_states.shape[1]], dim=1
         )
-        return self.to_out[0](hidden_states), self.to_add_out(encoder_hidden_states)
+        return self.to_out(hidden_states), self.to_add_out(encoder_hidden_states)
 
 
 class PAN2TransformerBlock(nn.Module):
@@ -297,7 +307,7 @@ class PAN2TransformerBlock(nn.Module):
         prefix: str = "",
     ):
         super().__init__()
-        self.norm1 = AdaLayerNormZero(dim, norm_type="layer_norm")
+        self.norm1 = AdaLayerNormZero(dim, quant_config=quant_config, prefix=f"{prefix}.norm1")
         self.norm1_context = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
         self.scale_shift_table_context = nn.Parameter(torch.zeros(6 * dim))
 
@@ -408,9 +418,7 @@ class PAN2Transformer3DModel(nn.Module):
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.time_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=inner_dim)
 
-        self.context_embedder = nn.Sequential(
-            DiffusersRMSNorm(text_embed_dim, eps=1e-5), nn.Linear(text_embed_dim, inner_dim)
-        )
+        self.context_embedder = nn.Sequential(RMSNorm(text_embed_dim, eps=1e-5), nn.Linear(text_embed_dim, inner_dim))
         self.context_refiner = nn.ModuleList(
             [
                 PAN2TokenRefinerBlock(inner_dim, num_attention_heads, attention_head_dim, refiner_mlp_ratio, eps=1e-5)
@@ -526,6 +534,20 @@ class PAN2Transformer3DModel(nn.Module):
 
         loaded_params: set[str] = set()
         for name, loaded_weight in weights:
+            # The checkpoint keeps the diffusers ``to_out.0`` name of the attention output projections.
+            name = name.replace(".to_out.0.", ".to_out.")
+            if name.startswith("context_refiner."):
+                # The checkpoint keeps the diffusers FeedForward names for the refiner MLP.
+                name = name.replace(".ff.net.0.proj.", ".ff.fc1.").replace(".ff.net.2.", ".ff.fc2.")
+                if name.endswith(".ff.fc1.weight"):
+                    # diffusers' SwiGLU stores ``[value; gate]``; SiluAndMul reads ``[gate; value]``. Loading each
+                    # half as its own shard also keeps the gate and value of a tensor-parallel rank together.
+                    param = params_dict[name]
+                    value, gate = loaded_weight.chunk(2, dim=0)
+                    param.weight_loader(param, gate, 0)
+                    param.weight_loader(param, value, 1)
+                    loaded_params.add(name)
+                    continue
             for param_name, weight_name, shard_id in stacked_params_mapping:
                 if weight_name not in name:
                     continue
