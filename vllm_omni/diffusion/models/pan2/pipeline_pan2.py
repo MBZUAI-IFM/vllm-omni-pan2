@@ -49,6 +49,8 @@ PAN2_MAX_SEQUENCE_LENGTH = 1536
 PAN2_DEFAULT_HEIGHT = 704
 PAN2_DEFAULT_WIDTH = 1248
 PAN2_DEFAULT_NUM_FRAMES = 313
+PAN2_VAE_SCALE_FACTOR_SPATIAL = 16
+PAN2_VAE_SCALE_FACTOR_TEMPORAL = 4
 PAN2_MAX_NUM_OUTPUTS = 10
 
 # Latents, the frames of one video (PIL images), or the frames as arrays.
@@ -65,10 +67,13 @@ def get_pan2_pre_process_func(
     if is_guardrails_enabled(od_config):
         ensure_initialized(od_config)
 
+    patch_size = od_config.tf_model_config.get("patch_size") or (1, 2, 2)
+    spatial_multiple = PAN2_VAE_SCALE_FACTOR_SPATIAL * patch_size[1]
+
     def pre_process_func(request: OmniDiffusionRequest) -> OmniDiffusionRequest:
         # Reject unsupported requests here, in the engine process: an OmniClientError raised in `forward` on the
         # workers reaches the client as a 500 under the multi-process executor, which drops its 4xx status.
-        _check_pan2_request(request.sampling_params, request.prompt)
+        _check_pan2_request(request.sampling_params, request.prompt, spatial_multiple)
         if is_guardrails_enabled(od_config, request.sampling_params):
             prompt = request.prompt
             check_text_safety(prompt if isinstance(prompt, str) else prompt.get("prompt") or "")
@@ -105,7 +110,10 @@ def get_pan2_post_process_func(od_config: OmniDiffusionConfig) -> Callable[..., 
     return post_process_func
 
 
-def _resolve_pan2_num_outputs(value: int) -> int:
+def _resolve_pan2_num_outputs(sampling_params: OmniDiffusionSamplingParams) -> int:
+    value = sampling_params.num_outputs_per_prompt
+    if value is None:
+        return 1
     if isinstance(value, bool) or not isinstance(value, int):
         raise OmniClientError(f"PAN2 num_outputs_per_prompt must be an integer in [1, {PAN2_MAX_NUM_OUTPUTS}]")
     if not 1 <= value <= PAN2_MAX_NUM_OUTPUTS:
@@ -113,8 +121,21 @@ def _resolve_pan2_num_outputs(value: int) -> int:
     return value
 
 
-def _check_pan2_request(sampling_params: OmniDiffusionSamplingParams, prompt: OmniPromptType) -> None:
+def _check_pan2_request(
+    sampling_params: OmniDiffusionSamplingParams,
+    prompt: OmniPromptType,
+    spatial_multiple: int = PAN2_VAE_SCALE_FACTOR_SPATIAL * 2,
+) -> None:
     """Reject the inputs PAN2 does not support."""
+    height, width, num_frames = sampling_params.height, sampling_params.width, sampling_params.num_frames
+    if (height is not None and height % spatial_multiple != 0) or (width is not None and width % spatial_multiple != 0):
+        raise OmniClientError(
+            f"PAN2 `height` and `width` must be divisible by {spatial_multiple}, got {height} and {width}."
+        )
+    if num_frames is not None and (num_frames - 1) % PAN2_VAE_SCALE_FACTOR_TEMPORAL != 0:
+        raise OmniClientError(
+            f"PAN2 `num_frames - 1` must be divisible by {PAN2_VAE_SCALE_FACTOR_TEMPORAL}, got {num_frames}."
+        )
     if sampling_params.sigmas is not None or sampling_params.timesteps is not None:
         raise OmniClientError(
             "PAN2 uses its own flow-matching schedule; custom `sigmas`/`timesteps` are not supported."
@@ -122,6 +143,10 @@ def _check_pan2_request(sampling_params: OmniDiffusionSamplingParams, prompt: Om
     multi_modal_data = (prompt.get("multi_modal_data") or {}) if isinstance(prompt, dict) else {}
     if multi_modal_data.get("video") is not None:
         raise OmniClientError("PAN2 does not accept video input; pass a single first-frame image for image-to-video.")
+    image = multi_modal_data.get("image")
+    if isinstance(image, list) and len(image) != 1:
+        raise OmniClientError(f"PAN2 conditions on a single first frame, got {len(image)} images.")
+    _resolve_pan2_num_outputs(sampling_params)
 
 
 class PAN2Pipeline(
@@ -339,9 +364,9 @@ class PAN2Pipeline(
         if len(req.prompts) != 1:
             raise ValueError("PAN2 takes a single prompt per request.")
         sampling_params = req.sampling_params
-        num_outputs = _resolve_pan2_num_outputs(sampling_params.num_outputs_per_prompt or 1)
         prompt_data = req.prompts[0]
         _check_pan2_request(sampling_params, prompt_data)
+        num_outputs = _resolve_pan2_num_outputs(sampling_params)
         if isinstance(prompt_data, str):
             prompt, negative_prompt, multi_modal_data = prompt_data, None, {}
         else:
@@ -351,8 +376,6 @@ class PAN2Pipeline(
 
         image = multi_modal_data.get("image")
         if isinstance(image, list):
-            if len(image) != 1:
-                raise ValueError(f"PAN2 conditions on a single first frame, got {len(image)} images.")
             image = image[0]
         if isinstance(image, str):
             image = PIL.Image.open(image)

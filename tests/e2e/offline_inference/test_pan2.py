@@ -14,6 +14,7 @@ from PIL import Image
 
 from tests.helpers.mark import hardware_test
 from tests.helpers.runtime import OmniRunner
+from vllm_omni.errors import OmniClientError
 from vllm_omni.inputs.data import OmniDiffusionSamplingParams
 
 MODEL = os.environ.get("VLLM_OMNI_PAN2_TINY_MODEL", "wuqing157/tiny-pan2-modular-pipe")
@@ -80,3 +81,13 @@ def test_pan2_generates_requested_video(omni_runner: OmniRunner, image: Image.Im
 def test_pan2_guidance_applies_to_every_frame(omni_runner: OmniRunner, image: Image.Image | None):
     unguided = _generate(omni_runner, image=image, guidance_scale=1.0)
     assert _max_frame_diff(_generate(omni_runner, image=image), unguided).min() > 4
+
+
+# Keep this test last: a rejected request stops the offline engine that the module's tests share.
+@hardware_test(res={"cuda": "L4"}, num_cards=1)
+def test_pan2_rejects_zero_num_outputs_per_prompt_before_dispatch(omni_runner: OmniRunner):
+    sampling_params = OmniDiffusionSamplingParams(
+        height=HEIGHT, width=WIDTH, num_frames=NUM_FRAMES, num_inference_steps=1, num_outputs_per_prompt=0
+    )
+    with pytest.raises(OmniClientError, match="num_outputs_per_prompt must be in"):
+        omni_runner.omni.generate({"prompt": "a cat walks on the grass"}, sampling_params)
