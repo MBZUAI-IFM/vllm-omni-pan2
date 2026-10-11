@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import dataclasses
 import os
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from typing import Any, ClassVar, TypeAlias, cast
 
 import numpy as np
@@ -349,6 +350,18 @@ class PAN2Pipeline(
     def predict_noise(self, **kwargs: Any) -> torch.Tensor:
         return self.transformer(**kwargs)
 
+    @contextmanager
+    def _resident_dit_layers_on_device(self) -> Iterator[None]:
+        """Keep the resident DiT layers of distributed layerwise offload on the device while denoising."""
+        controller = getattr(self, "_dlo_residency_controller", None)
+        if controller is not None:
+            controller.load_resident_layers()
+        try:
+            yield
+        finally:
+            if controller is not None:
+                controller.offload_resident_layers()
+
     def forward(
         self,
         req: DiffusionRequestBatch,
@@ -440,7 +453,7 @@ class PAN2Pipeline(
         timesteps = self.scheduler.timesteps
         self._num_timesteps = len(timesteps)
 
-        with self.progress_bar(total=len(timesteps)) as pbar:
+        with self._resident_dit_layers_on_device(), self.progress_bar(total=len(timesteps)) as pbar:
             for t in timesteps:
                 self._current_timestep = t
 
