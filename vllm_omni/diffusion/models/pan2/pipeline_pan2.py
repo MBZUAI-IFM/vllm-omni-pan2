@@ -21,8 +21,8 @@ from transformers import AutoTokenizer, Qwen3_5TextModel
 from vllm.logger import init_logger
 from vllm.model_executor.models.utils import AutoWeightsLoader
 
-from vllm_omni.diffusion.cache.cachedit import CacheDiTBackend, RequestScopedCacheDiTRuntime
-from vllm_omni.diffusion.data import DiffusionOutput, OmniDiffusionConfig
+from vllm_omni.diffusion.cache.cachedit import CacheDiTBackend, CacheDiTRequestSpec, RequestScopedCacheDiTRuntime
+from vllm_omni.diffusion.data import DiffusionCacheConfig, DiffusionOutput, OmniDiffusionConfig
 from vllm_omni.diffusion.distributed.autoencoders.autoencoder_kl_wan import DistributedAutoencoderKLWan
 from vllm_omni.diffusion.distributed.cfg_parallel import CFGParallelMixin
 from vllm_omni.diffusion.distributed.utils import get_local_device
@@ -30,14 +30,13 @@ from vllm_omni.diffusion.model_loader.diffusers_loader import DiffusersPipelineL
 from vllm_omni.diffusion.model_loader.hub_prefetch import from_pretrained_with_prefetch, prefetch_subfolders
 from vllm_omni.diffusion.models.interface import SupportImageInput, SupportsComponentDiscovery
 from vllm_omni.diffusion.models.pan2.pan2_transformer import PAN2Transformer3DModel
-from vllm_omni.diffusion.models.pan2.quality_policy import PAN2_GENERIC_CACHE_KEY, PAN2QualityPolicy
-from vllm_omni.diffusion.models.progress_bar import ProgressBarMixin
+from vllm_omni.diffusion.models.progress_bar import ProgressBarMixin, _is_rank_zero
 from vllm_omni.diffusion.offloader.offload_plan import OffloadPlan
 from vllm_omni.diffusion.profiler.diffusion_pipeline_profiler import DiffusionPipelineProfilerMixin
 from vllm_omni.diffusion.request import OmniDiffusionRequest, resolve_video_num_frames
 from vllm_omni.diffusion.utils.tf_utils import get_transformer_config_kwargs
 from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
-from vllm_omni.errors import OmniClientError
+from vllm_omni.errors import GuardrailViolationError, OmniClientError
 from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniPromptType
 from vllm_omni.platforms import current_omni_platform
 
@@ -58,15 +57,195 @@ PAN2_MAX_NUM_OUTPUTS = 10
 PAN2PostProcessOutput: TypeAlias = torch.Tensor | list[PIL.Image.Image] | np.ndarray | list[np.ndarray]
 
 
+PAN2_GENERIC_CACHE_KEY = "pan2.generic"
+PAN2_HIGH_CACHE_KEY = "pan2.high"
+
+
+def pan2_high_quality_cache_config() -> DiffusionCacheConfig:
+    """PAN2's conservative Cache-DiT profile, selected by ``quality="high"``."""
+    return DiffusionCacheConfig(
+        Fn_compute_blocks=1,
+        Bn_compute_blocks=0,
+        max_warmup_steps=4,
+        residual_diff_threshold=0.06,
+        max_continuous_cached_steps=1,
+        enable_taylorseer=False,
+        scm_steps_mask_policy=None,
+    )
+
+
+class PAN2QualityPolicy:
+    """Resolve a request's ``quality`` into the Cache-DiT profile it should run with.
+
+    ``high`` selects PAN2's conservative profile and ``lossless`` runs without a cache. Omitted quality uses the
+    server's Cache-DiT profile when the server started with ``cache_backend="cache_dit"``, and no cache otherwise.
+    """
+
+    def __init__(self, od_config: OmniDiffusionConfig) -> None:
+        self._od_config = od_config
+
+    def resolve(self, *, quality: str | None, num_inference_steps: int) -> CacheDiTRequestSpec | None:
+        if quality == "high":
+            key, cache_config = PAN2_HIGH_CACHE_KEY, pan2_high_quality_cache_config()
+        elif quality is None and self._od_config.cache_backend == "cache_dit":
+            key, cache_config = PAN2_GENERIC_CACHE_KEY, self._od_config.cache_config
+        else:
+            return None
+        return CacheDiTRequestSpec(
+            installation_key=key, cache_config=cache_config, num_inference_steps=num_inference_steps
+        )
+
+
+# Guardrails: a thin adapter around the ``pan2_guardrail`` package's ``PAN2SafetyChecker`` -- Qwen3Guard-Gen-4B on the
+# prompt, and the Cosmos-Guardrail1 video content safety filter on 16 frames of each generated video. Either check
+# blocks the request with a ``GuardrailViolationError``. They are on by default; ``--no-guardrails`` turns them off for
+# the server and ``extra_args["guardrails"]`` per request.
+try:
+    from pan2_guardrail import PAN2SafetyChecker
+except ImportError:
+
+    class PAN2SafetyChecker:  # type: ignore[no-redef]
+        # Raised at runtime (not import time) so guardrail-less inference keeps working without `pan2_guardrail`.
+        @classmethod
+        def from_pretrained(cls, *args: object, **kwargs: object) -> PAN2SafetyChecker:
+            raise ValueError(
+                "The PAN2 guardrails are enabled but the pan2-guardrail package is not installed. Install it with "
+                "`pip install git+https://github.com/MBZUAI-IFM/PAN2-guardrail`, or disable the guardrails with "
+                "--no-guardrails. Its video check downloads the gated "
+                "nvidia/Cosmos-Guardrail1 weights, whose license must be accepted on the Hugging Face Hub."
+            )
+
+
+TextGuardrailFn = Callable[[str], None]
+VideoGuardrailFn = Callable[[np.ndarray], None]
+
+_text_guardrail: TextGuardrailFn | None = None
+_video_guardrail: VideoGuardrailFn | None = None
+
+
+@contextmanager
+def _on_compute_device(module: nn.Module, offload_to_cpu: bool) -> Iterator[None]:
+    if not offload_to_cpu:
+        yield
+        return
+    module.to(current_omni_platform.device_type)
+    try:
+        yield
+    finally:
+        module.to("cpu")
+
+
+def _build_text_guardrail(checker: PAN2SafetyChecker, offload_to_cpu: bool) -> TextGuardrailFn:
+    def text_guardrail(prompt: str) -> None:
+        with _on_compute_device(checker.text_guard, offload_to_cpu):
+            safe = checker.check_text_safety(prompt)
+        if not safe:
+            # PAN2SafetyChecker logs the reason at CRITICAL.
+            raise GuardrailViolationError("Input was blocked by PAN2 guardrails.")
+
+    return text_guardrail
+
+
+def _build_video_guardrail(checker: PAN2SafetyChecker, offload_to_cpu: bool) -> VideoGuardrailFn:
+    def video_guardrail(frames: np.ndarray) -> None:
+        with _on_compute_device(checker.video_guard, offload_to_cpu):
+            result = checker.check_video_safety(frames)
+        # `check_video_safety` returns the unchanged frames when they pass and None when the video is blocked.
+        if result is None:
+            raise GuardrailViolationError("The generated video was blocked by PAN2 guardrails.")
+
+    return video_guardrail
+
+
+def _init_default_guardrails(offload_to_cpu: bool = False) -> None:
+    global _text_guardrail, _video_guardrail
+    if _text_guardrail is not None:
+        return
+    if _is_rank_zero():
+        logger.info("Initializing PAN2 guardrails (offload_to_cpu=%s)...", offload_to_cpu)
+
+    # Raises ValueError when `pan2_guardrail` is not installed: the caller has opted in to guardrails.
+    checker = PAN2SafetyChecker.from_pretrained()
+    # The checker loads on CPU. With offloading, each guard moves to the compute device only for its check.
+    if not offload_to_cpu:
+        checker.to(current_omni_platform.device_type)
+
+    _text_guardrail = _build_text_guardrail(checker, offload_to_cpu)
+    _video_guardrail = _build_video_guardrail(checker, offload_to_cpu)
+    if _is_rank_zero():
+        logger.info("PAN2 guardrails initialized.")
+
+
+def _ensure_guardrails_initialized(od_config: OmniDiffusionConfig) -> None:
+    if not is_guardrails_enabled(od_config):
+        return
+    model_config = od_config.model_config or {}
+    _init_default_guardrails(offload_to_cpu=bool(model_config.get("offload_guardrail_models", False)))
+
+
+def _check_text_safety(prompt: str) -> None:
+    if _text_guardrail is not None:
+        _text_guardrail(prompt)
+
+
+def _video_to_uint8_frames(video: torch.Tensor) -> np.ndarray:
+    """Turn one decoded `[C, T, H, W]` video in `[-1, 1]` into the uint8 `[T, H, W, C]` frames serving delivers.
+
+    Rounds as `VideoProcessor.postprocess_video` does, so the guardrail sees the delivered pixels. Converts one frame at
+    a time to bound the float intermediates of long videos.
+    """
+    num_channels, num_frames, height, width = video.shape
+    frames = np.empty((num_frames, height, width, num_channels), dtype=np.uint8)
+    for i in range(num_frames):
+        frame = (video[:, i].detach() * 0.5 + 0.5).clamp(0, 1).permute(1, 2, 0)
+        frames[i] = (frame.float() * 255).round().to(torch.uint8).cpu().numpy()
+    return frames
+
+
+def _check_video_safety(video: torch.Tensor) -> list[np.ndarray] | None:
+    """Check each video of a decoded `[B, C, T, H, W]` batch; raises `GuardrailViolationError` when one is blocked.
+
+    Returns the checked uint8 frames of each video, or None when the guardrails are not loaded.
+    """
+    if _video_guardrail is None:
+        return None
+    checked_frames = []
+    for sample in video:
+        frames = _video_to_uint8_frames(sample)
+        _video_guardrail(frames)
+        checked_frames.append(frames)
+    return checked_frames
+
+
+def is_guardrails_enabled(
+    od_config: OmniDiffusionConfig,
+    sampling_params: OmniDiffusionSamplingParams | None = None,
+) -> bool:
+    """Resolve the active guardrail gate.
+
+    Server-level ``od_config.model_config["guardrails"]`` decides whether the guardrail models are loaded at all
+    (eager load at pipeline build time). When that is False, no per-request override can turn checks back on.
+
+    When the server gate is on, ``sampling_params.extra_args["guardrails"]`` may override on a per-request basis:
+    ``False`` skips the checks for that request, anything else (or missing) keeps them.
+    """
+    model_config = od_config.model_config or {}
+    if not bool(model_config.get("guardrails", True)):
+        return False
+    if sampling_params is not None:
+        per_request = (sampling_params.extra_args or {}).get("guardrails")
+        if per_request is not None:
+            return bool(per_request)
+    return True
+
+
 def get_pan2_pre_process_func(
     od_config: OmniDiffusionConfig,
 ) -> Callable[[OmniDiffusionRequest], OmniDiffusionRequest]:
-    from vllm_omni.diffusion.models.pan2.guardrails import check_text_safety, ensure_initialized, is_guardrails_enabled
-
     # Eager-load the guardrail models at pipeline build time when the server-level gate is on. Per-request overrides
     # only decide whether the loaded models are invoked.
     if is_guardrails_enabled(od_config):
-        ensure_initialized(od_config)
+        _ensure_guardrails_initialized(od_config)
 
     patch_size = od_config.tf_model_config.get("patch_size") or (1, 2, 2)
     spatial_multiple = PAN2_VAE_SCALE_FACTOR_SPATIAL * patch_size[1]
@@ -77,15 +256,13 @@ def get_pan2_pre_process_func(
         _check_pan2_request(request.sampling_params, request.prompt, spatial_multiple)
         if is_guardrails_enabled(od_config, request.sampling_params):
             prompt = request.prompt
-            check_text_safety(prompt if isinstance(prompt, str) else prompt.get("prompt") or "")
+            _check_text_safety(prompt if isinstance(prompt, str) else prompt.get("prompt") or "")
         return request
 
     return pre_process_func
 
 
 def get_pan2_post_process_func(od_config: OmniDiffusionConfig) -> Callable[..., PAN2PostProcessOutput]:
-    from vllm_omni.diffusion.models.pan2.guardrails import check_video_safety, is_guardrails_enabled
-
     video_processor = VideoProcessor(vae_scale_factor=16)
 
     def post_process_func(
@@ -97,7 +274,7 @@ def get_pan2_post_process_func(od_config: OmniDiffusionConfig) -> Callable[..., 
             output_type = sampling_params.output_type
         if output_type == "latent":
             return video
-        checked_frames = check_video_safety(video) if is_guardrails_enabled(od_config, sampling_params) else None
+        checked_frames = _check_video_safety(video) if is_guardrails_enabled(od_config, sampling_params) else None
         if checked_frames is not None and output_type == "pil":
             # Reuse the uint8 frames the guardrail checked; they are the pixels `postprocess_video` would deliver.
             result = [[PIL.Image.fromarray(frame) for frame in frames] for frames in checked_frames]

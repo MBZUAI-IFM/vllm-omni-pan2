@@ -41,7 +41,7 @@ def _make_pipeline():
     """A `PAN2Pipeline` without weights whose denoising steps leave the latents unchanged; the VAE is never set."""
     from vllm_omni.diffusion.cache.cachedit import RequestScopedCacheDiTRuntime
     from vllm_omni.diffusion.models.pan2 import PAN2Pipeline
-    from vllm_omni.diffusion.models.pan2.quality_policy import PAN2QualityPolicy
+    from vllm_omni.diffusion.models.pan2.pipeline_pan2 import PAN2QualityPolicy
 
     pipeline = object.__new__(PAN2Pipeline)
     pipeline.device = torch.device("cpu")

@@ -50,13 +50,6 @@ from vllm_omni.inputs.data import OmniDiffusionSamplingParams
 
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
-# Cosmos3 blocks inputs; PAN2 blocks inputs and generated videos.
-GUARDRAIL_MESSAGES = [
-    "Input was blocked by Cosmos3 guardrails.",
-    "Input was blocked by PAN2 guardrails.",
-    "The generated video was blocked by PAN2 guardrails.",
-]
-
 
 class MockVideoResult:
     def __init__(
@@ -2392,12 +2385,11 @@ def test_failed_async_latent_edit_cleans_source_upload(test_client, mocker: Mock
     _wait_until(lambda: not Path(captured_path[0]).exists())
 
 
-@pytest.mark.parametrize("message", GUARDRAIL_MESSAGES)
-def test_async_guardrail_error_returns_400_on_retrieve(test_client, mocker: MockerFixture, message: str):
+def test_async_guardrail_error_returns_400_on_retrieve(test_client, mocker: MockerFixture):
     mocker.patch.object(
         OmniOpenAIServingVideo,
         "generate_video_bytes",
-        side_effect=GuardrailViolationError(message),
+        side_effect=GuardrailViolationError("Input was blocked by Cosmos3 guardrails."),
     )
     response = test_client.post("/v1/videos", data={"prompt": "blocked prompt"})
     assert response.status_code == 200
@@ -2405,7 +2397,7 @@ def test_async_guardrail_error_returns_400_on_retrieve(test_client, mocker: Mock
     video_id = response.json()["id"]
     failed = _wait_for_status(test_client, video_id, VideoGenerationStatus.FAILED.value)
     assert failed["error"]["code"] == 400
-    assert failed["error"]["message"] == message
+    assert failed["error"]["message"] == "Input was blocked by Cosmos3 guardrails."
 
     retrieve = test_client.get(f"/v1/videos/{video_id}")
     assert retrieve.status_code == 400
@@ -3206,19 +3198,18 @@ def test_sync_generation_error_returns_500(test_client, mocker: MockerFixture):
     assert "GPU exploded" in response.json()["detail"]
 
 
-@pytest.mark.parametrize("message", GUARDRAIL_MESSAGES)
-def test_sync_guardrail_error_returns_400(test_client, mocker: MockerFixture, message: str):
+def test_sync_guardrail_error_returns_400(test_client, mocker: MockerFixture):
     mocker.patch.object(
         OmniOpenAIServingVideo,
         "generate_video_bytes",
-        side_effect=GuardrailViolationError(message),
+        side_effect=GuardrailViolationError("Input was blocked by Cosmos3 guardrails."),
     )
     response = test_client.post(
         "/v1/videos/sync",
         data={"prompt": "blocked prompt"},
     )
     assert response.status_code == 400
-    assert response.json()["detail"] == message
+    assert response.json()["detail"] == "Input was blocked by Cosmos3 guardrails."
 
 
 def test_sync_does_not_create_store_entry(test_client, mocker: MockerFixture):

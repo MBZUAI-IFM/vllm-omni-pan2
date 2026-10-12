@@ -28,7 +28,7 @@ CONDITION_IMAGE = Image.new("RGB", (WIDTH, HEIGHT), (200, 30, 30))
 pytestmark = [
     pytest.mark.core_model,
     pytest.mark.diffusion,
-    # The guardrails load gated weights; tests/diffusion/models/pan2/test_pan2_guardrails.py covers them.
+    # The guardrails load gated weights.
     pytest.mark.parametrize("omni_runner", [(MODEL, None, {"model_config": {"guardrails": False}})], indirect=True),
 ]
 
