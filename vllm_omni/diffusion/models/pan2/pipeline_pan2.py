@@ -34,6 +34,7 @@ from vllm_omni.diffusion.models.progress_bar import ProgressBarMixin, _is_rank_z
 from vllm_omni.diffusion.offloader.offload_plan import OffloadPlan
 from vllm_omni.diffusion.profiler.diffusion_pipeline_profiler import DiffusionPipelineProfilerMixin
 from vllm_omni.diffusion.request import OmniDiffusionRequest, resolve_video_num_frames
+from vllm_omni.diffusion.utils.guardrail_utils import is_guardrails_enabled
 from vllm_omni.diffusion.utils.tf_utils import get_transformer_config_kwargs
 from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
 from vllm_omni.errors import GuardrailViolationError, OmniClientError
@@ -215,28 +216,6 @@ def _check_video_safety(video: torch.Tensor) -> list[np.ndarray] | None:
         _video_guardrail(frames)
         checked_frames.append(frames)
     return checked_frames
-
-
-def is_guardrails_enabled(
-    od_config: OmniDiffusionConfig,
-    sampling_params: OmniDiffusionSamplingParams | None = None,
-) -> bool:
-    """Resolve the active guardrail gate.
-
-    Server-level ``od_config.model_config["guardrails"]`` decides whether the guardrail models are loaded at all
-    (eager load at pipeline build time). When that is False, no per-request override can turn checks back on.
-
-    When the server gate is on, ``sampling_params.extra_args["guardrails"]`` may override on a per-request basis:
-    ``False`` skips the checks for that request, anything else (or missing) keeps them.
-    """
-    model_config = od_config.model_config or {}
-    if not bool(model_config.get("guardrails", True)):
-        return False
-    if sampling_params is not None:
-        per_request = (sampling_params.extra_args or {}).get("guardrails")
-        if per_request is not None:
-            return bool(per_request)
-    return True
 
 
 def get_pan2_pre_process_func(
