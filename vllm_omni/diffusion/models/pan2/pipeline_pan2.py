@@ -111,7 +111,7 @@ except ImportError:
         def from_pretrained(cls, *args: object, **kwargs: object) -> PAN2SafetyChecker:
             raise ValueError(
                 "The PAN2 guardrails are enabled but the pan2-guardrail package is not installed. Install it with "
-                "`pip install git+https://github.com/MBZUAI-IFM/PAN2-guardrail`, or disable the guardrails with "
+                "`pip install git+https://github.com/ifm-ai/pan2-guardrail`, or disable the guardrails with "
                 "--no-guardrails. Its video check downloads the gated "
                 "nvidia/Cosmos-Guardrail1 weights, whose license must be accepted on the Hugging Face Hub."
             )
