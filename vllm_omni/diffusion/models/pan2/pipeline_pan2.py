@@ -97,10 +97,10 @@ class PAN2QualityPolicy:
         )
 
 
-# Guardrails: a thin adapter around the ``pan2_guardrail`` package's ``PAN2SafetyChecker`` -- Qwen3Guard-Gen-4B on the
-# prompt, and the Cosmos-Guardrail1 video content safety filter on 16 frames of each generated video. Either check
-# blocks the request with a ``GuardrailViolationError``. They are on by default; ``--no-guardrails`` turns them off for
-# the server and ``extra_args["guardrails"]`` per request.
+# Guardrails: a thin adapter around the ``pan2_guardrail`` package's ``PAN2SafetyChecker``, which checks the prompt
+# and each generated video. Either check blocks the request with a ``GuardrailViolationError``. They are on by
+# default; ``--no-guardrails`` turns them off for the server and ``extra_args["guardrails"]`` per request, at the
+# user's own risk.
 try:
     from pan2_guardrail import PAN2SafetyChecker
 except ImportError:
@@ -112,8 +112,7 @@ except ImportError:
             raise ValueError(
                 "The PAN2 guardrails are enabled but the pan2-guardrail package is not installed. Install it with "
                 "`pip install git+https://github.com/ifm-ai/pan2-guardrail`, or disable the guardrails with "
-                "--no-guardrails. Its video check downloads the gated "
-                "nvidia/Cosmos-Guardrail1 weights, whose license must be accepted on the Hugging Face Hub."
+                "--no-guardrails at your own risk."
             )
 
 
@@ -134,6 +133,8 @@ def _on_compute_device(module: nn.Module, offload_to_cpu: bool) -> Iterator[None
         yield
     finally:
         module.to("cpu")
+        # Return the guard's cached blocks, so the offloaded guard does not keep its GPU memory between checks.
+        current_omni_platform.empty_cache()
 
 
 def _build_text_guardrail(checker: PAN2SafetyChecker, offload_to_cpu: bool) -> TextGuardrailFn:
