@@ -8,7 +8,7 @@ video generation using vLLM-Omni.
 | Model | Model ID |
 |-------|----------|
 | Wan2.2 I2V | `Wan-AI/Wan2.2-I2V-A14B-Diffusers` |
-| PAN2 | `IFM/PAN2` |
+| PAN 2 | `IFM/PAN2` |
 | SANA-Video 2B (480p) | `Efficient-Large-Model/SANA-Video_2B_480p_diffusers` |
 | SANA-Video 2B (720p) | `Efficient-Large-Model/SANA-Video_2B_720p_diffusers` |
 
@@ -297,7 +297,7 @@ while true; do
 done
 ```
 
-## PAN2
+## PAN 2
 
 ```bash
 # One GPU with ~100 GiB free; see the recipe for multi-GPU and smaller GPUs.
@@ -314,6 +314,6 @@ video_id=$(echo "$create_response" | jq -r '.id')
 ```
 
 Poll and download the result as shown in [Poll Until
-Complete](#poll-until-complete). PAN2 needs a structured prompt; the plain
-prompt above only shows the command. See the [PAN2
+Complete](#poll-until-complete). PAN 2 needs a structured prompt; the plain
+prompt above only shows the command. See the [PAN 2
 recipe](../../../recipes/IFM/PAN2.md) for details.

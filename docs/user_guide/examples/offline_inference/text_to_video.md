@@ -70,7 +70,7 @@ python text_to_video.py \
 See the [LTX-2 recipe](../../../../recipes/LTX/LTX-2.md) for all checkpoints,
 pipeline selection, I2V, defaults, and advanced options.
 
-### PAN2
+### PAN 2
 
 ```bash
 python text_to_video.py \
@@ -79,8 +79,8 @@ python text_to_video.py \
   --output pan2_output.mp4
 ```
 
-PAN2 needs a structured prompt; the plain prompt above only shows the command.
-See the [PAN2 recipe](../../../../recipes/IFM/PAN2.md) for details.
+PAN 2 needs a structured prompt; the plain prompt above only shows the command.
+See the [PAN 2 recipe](../../../../recipes/IFM/PAN2.md) for details.
 
 ### HunyuanVideo-1.5 (480p)
 

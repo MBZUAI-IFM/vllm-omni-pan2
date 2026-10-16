@@ -1,4 +1,4 @@
-# PAN2 on RTX 5090
+# PAN 2 on RTX 5090
 
 This recipe runs [PAN2](PAN2.md) text-to-video and image-to-video on 32 GB GPUs
 (GeForce RTX 5090). All profiles use distributed layerwise offload with the
@@ -26,7 +26,7 @@ No resident blocks. With 2 resident blocks the peak was 29.3 GiB, about 2.5 GiB
 below the card's usable memory.
 
 ```bash
-pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN2 guardrails
+pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN 2 guardrails
 vllm serve IFM/PAN2 --omni --port 8091 \
   --vae-use-tiling \
   --enable-distributed-layerwise-offload --dlo-no-use-allgather --dlo-resident-layers 0 \
@@ -40,7 +40,7 @@ vllm serve IFM/PAN2 --omni --port 8091 \
 image-to-video through `vllm serve`.
 
 ```bash
-pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN2 guardrails
+pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN 2 guardrails
 vllm serve IFM/PAN2 --omni --port 8091 \
   --num-gpus 2 \
   --tensor-parallel-size 2 \

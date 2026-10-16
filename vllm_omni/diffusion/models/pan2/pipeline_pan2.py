@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
-"""PAN2 video generation pipeline: text-to-video, and image-to-video from a first frame."""
+"""PAN 2 video generation pipeline: text-to-video, and image-to-video from a first frame."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ from vllm_omni.platforms import current_omni_platform
 logger = init_logger(__name__)
 
 PAN2_SYSTEM_MESSAGE = "You are a helpful assistant. Generate the video with the following instructions."
-# PAN2 conditions on `hidden_states[-3]` of the text encoder, i.e. it skips its last two layers.
+# PAN 2 conditions on `hidden_states[-3]` of the text encoder, i.e. it skips its last two layers.
 PAN2_TEXT_ENCODER_LAYERS_TO_SKIP = 2
 PAN2_MAX_SEQUENCE_LENGTH = 1536
 PAN2_DEFAULT_HEIGHT = 704
@@ -63,7 +63,7 @@ PAN2_HIGH_CACHE_KEY = "pan2.high"
 
 
 def pan2_high_quality_cache_config() -> DiffusionCacheConfig:
-    """PAN2's conservative Cache-DiT profile, selected by ``quality="high"``."""
+    """PAN 2's conservative Cache-DiT profile, selected by ``quality="high"``."""
     return DiffusionCacheConfig(
         Fn_compute_blocks=1,
         Bn_compute_blocks=0,
@@ -78,7 +78,7 @@ def pan2_high_quality_cache_config() -> DiffusionCacheConfig:
 class PAN2QualityPolicy:
     """Resolve a request's ``quality`` into the Cache-DiT profile it should run with.
 
-    ``high`` selects PAN2's conservative profile and ``lossless`` runs without a cache. Omitted quality uses the
+    ``high`` selects PAN 2's conservative profile and ``lossless`` runs without a cache. Omitted quality uses the
     server's Cache-DiT profile when the server started with ``cache_backend="cache_dit"``, and no cache otherwise.
     """
 
@@ -110,7 +110,7 @@ except ImportError:
         @classmethod
         def from_pretrained(cls, *args: object, **kwargs: object) -> PAN2SafetyChecker:
             raise ValueError(
-                "The PAN2 guardrails are enabled but the pan2-guardrail package is not installed. Install it with "
+                "The PAN 2 guardrails are enabled but the pan2-guardrail package is not installed. Install it with "
                 "`pip install git+https://github.com/ifm-ai/pan2-guardrail`, or disable the guardrails with "
                 "--no-guardrails at your own risk."
             )
@@ -143,7 +143,7 @@ def _build_text_guardrail(checker: PAN2SafetyChecker, offload_to_cpu: bool) -> T
             safe = checker.check_text_safety(prompt)
         if not safe:
             # PAN2SafetyChecker logs the reason at CRITICAL.
-            raise GuardrailViolationError("Input was blocked by PAN2 guardrails.")
+            raise GuardrailViolationError("Input was blocked by PAN 2 guardrails.")
 
     return text_guardrail
 
@@ -154,7 +154,7 @@ def _build_video_guardrail(checker: PAN2SafetyChecker, offload_to_cpu: bool) -> 
             result = checker.check_video_safety(frames)
         # `check_video_safety` returns the unchanged frames when they pass and None when the video is blocked.
         if result is None:
-            raise GuardrailViolationError("The generated video was blocked by PAN2 guardrails.")
+            raise GuardrailViolationError("The generated video was blocked by PAN 2 guardrails.")
 
     return video_guardrail
 
@@ -164,7 +164,7 @@ def _init_default_guardrails(offload_to_cpu: bool = False) -> None:
     if _text_guardrail is not None:
         return
     if _is_rank_zero():
-        logger.info("Initializing PAN2 guardrails (offload_to_cpu=%s)...", offload_to_cpu)
+        logger.info("Initializing PAN 2 guardrails (offload_to_cpu=%s)...", offload_to_cpu)
 
     # Raises ValueError when `pan2_guardrail` is not installed: the caller has opted in to guardrails.
     checker = PAN2SafetyChecker.from_pretrained()
@@ -175,7 +175,7 @@ def _init_default_guardrails(offload_to_cpu: bool = False) -> None:
     _text_guardrail = _build_text_guardrail(checker, offload_to_cpu)
     _video_guardrail = _build_video_guardrail(checker, offload_to_cpu)
     if _is_rank_zero():
-        logger.info("PAN2 guardrails initialized.")
+        logger.info("PAN 2 guardrails initialized.")
 
 
 def _ensure_guardrails_initialized(od_config: OmniDiffusionConfig) -> None:
@@ -273,9 +273,9 @@ def _resolve_pan2_num_outputs(sampling_params: OmniDiffusionSamplingParams) -> i
     if value is None:
         return 1
     if isinstance(value, bool) or not isinstance(value, int):
-        raise OmniClientError(f"PAN2 num_outputs_per_prompt must be an integer in [1, {PAN2_MAX_NUM_OUTPUTS}]")
+        raise OmniClientError(f"PAN 2 num_outputs_per_prompt must be an integer in [1, {PAN2_MAX_NUM_OUTPUTS}]")
     if not 1 <= value <= PAN2_MAX_NUM_OUTPUTS:
-        raise OmniClientError(f"PAN2 num_outputs_per_prompt must be in [1, {PAN2_MAX_NUM_OUTPUTS}], got {value}")
+        raise OmniClientError(f"PAN 2 num_outputs_per_prompt must be in [1, {PAN2_MAX_NUM_OUTPUTS}], got {value}")
     return value
 
 
@@ -284,26 +284,26 @@ def _check_pan2_request(
     prompt: OmniPromptType,
     spatial_multiple: int = PAN2_VAE_SCALE_FACTOR_SPATIAL * 2,
 ) -> None:
-    """Reject the inputs PAN2 does not support."""
+    """Reject the inputs PAN 2 does not support."""
     height, width, num_frames = sampling_params.height, sampling_params.width, sampling_params.num_frames
     if (height is not None and height % spatial_multiple != 0) or (width is not None and width % spatial_multiple != 0):
         raise OmniClientError(
-            f"PAN2 `height` and `width` must be divisible by {spatial_multiple}, got {height} and {width}."
+            f"PAN 2 `height` and `width` must be divisible by {spatial_multiple}, got {height} and {width}."
         )
     if num_frames is not None and (num_frames - 1) % PAN2_VAE_SCALE_FACTOR_TEMPORAL != 0:
         raise OmniClientError(
-            f"PAN2 `num_frames - 1` must be divisible by {PAN2_VAE_SCALE_FACTOR_TEMPORAL}, got {num_frames}."
+            f"PAN 2 `num_frames - 1` must be divisible by {PAN2_VAE_SCALE_FACTOR_TEMPORAL}, got {num_frames}."
         )
     if sampling_params.sigmas is not None or sampling_params.timesteps is not None:
         raise OmniClientError(
-            "PAN2 uses its own flow-matching schedule; custom `sigmas`/`timesteps` are not supported."
+            "PAN 2 uses its own flow-matching schedule; custom `sigmas`/`timesteps` are not supported."
         )
     multi_modal_data = (prompt.get("multi_modal_data") or {}) if isinstance(prompt, dict) else {}
     if multi_modal_data.get("video") is not None:
-        raise OmniClientError("PAN2 does not accept video input; pass a single first-frame image for image-to-video.")
+        raise OmniClientError("PAN 2 does not accept video input; pass a single first-frame image for image-to-video.")
     image = multi_modal_data.get("image")
     if isinstance(image, list) and len(image) != 1:
-        raise OmniClientError(f"PAN2 conditions on a single first frame, got {len(image)} images.")
+        raise OmniClientError(f"PAN 2 conditions on a single first frame, got {len(image)} images.")
     _resolve_pan2_num_outputs(sampling_params)
 
 
@@ -315,7 +315,7 @@ class PAN2Pipeline(
     SupportImageInput,
     SupportsComponentDiscovery,
 ):
-    """PAN2 video generator. A request with an image in ``multi_modal_data`` runs image-to-video from that frame."""
+    """PAN 2 video generator. A request with an image in ``multi_modal_data`` runs image-to-video from that frame."""
 
     _dit_modules: ClassVar[list[str]] = ["transformer"]
     _encoder_modules: ClassVar[list[str]] = ["text_encoder"]
@@ -335,7 +335,7 @@ class PAN2Pipeline(
         parallel_config = od_config.parallel_config
         if parallel_config.ring_degree > 1 or parallel_config.allgather_degree > 1:
             raise NotImplementedError(
-                "PAN2 does not support ring or all-gather sequence parallel: its padded joint video/text sequence "
+                "PAN 2 does not support ring or all-gather sequence parallel: its padded joint video/text sequence "
                 "needs an attention mask they do not carry. Use Ulysses (--usp) and CFG parallelism instead."
             )
         self.od_config = od_config
@@ -430,14 +430,14 @@ class PAN2Pipeline(
             messages, add_generation_prompt=True, tokenize=True, return_dict=True
         ).input_ids
 
-        # PAN2 conditions on the tokens after the `<|im_start|>user\n` header: the prompt and the assistant header.
+        # PAN 2 conditions on the tokens after the `<|im_start|>user\n` header: the prompt and the assistant header.
         header_ids = self.tokenizer("<|im_start|>user\n", add_special_tokens=False).input_ids
         crop_start = next(
             (i + len(header_ids) for i in range(len(input_ids)) if input_ids[i : i + len(header_ids)] == header_ids),
             None,
         )
         if crop_start is None:
-            raise ValueError("The PAN2 tokenizer's chat template has no `<|im_start|>user\\n` header.")
+            raise ValueError("The PAN 2 tokenizer's chat template has no `<|im_start|>user\\n` header.")
         input_ids = torch.tensor([input_ids[: crop_start + PAN2_MAX_SEQUENCE_LENGTH]], device=device)
 
         prompt_embeds = self.text_encoder(input_ids=input_ids, output_hidden_states=True).hidden_states[
@@ -481,7 +481,7 @@ class PAN2Pipeline(
         if image is None:
             return condition_latents
 
-        # Scale the image to cover the canvas, rounding its size, and center crop it, as PAN2 was trained.
+        # Scale the image to cover the canvas, rounding its size, and center crop it, as PAN 2 was trained.
         scale = max(width / image.width, height / image.height)
         image = image.resize((round(image.width * scale), round(image.height * scale)), resample=PIL.Image.LANCZOS)
         left, top = round((image.width - width) / 2), round((image.height - height) / 2)
@@ -532,7 +532,7 @@ class PAN2Pipeline(
         **kwargs,
     ) -> DiffusionOutput:
         if len(req.prompts) != 1:
-            raise ValueError("PAN2 takes a single prompt per request.")
+            raise ValueError("PAN 2 takes a single prompt per request.")
         sampling_params = req.sampling_params
         prompt_data = req.prompts[0]
         _check_pan2_request(sampling_params, prompt_data)
@@ -567,7 +567,7 @@ class PAN2Pipeline(
         cache_dit_spec = self._quality_policy.resolve(quality=sampling_params.quality, num_inference_steps=num_steps)
         if cache_dit_spec is not None and self.sequential_cfg_branches and not do_cfg:
             logger.warning_once(
-                "PAN2 runs without Cache-DiT for requests without CFG when CFG branches run sequentially."
+                "PAN 2 runs without Cache-DiT for requests without CFG when CFG branches run sequentially."
             )
             cache_dit_spec = None
         self._cache_dit_runtime.prepare(cache_dit_spec)
@@ -604,7 +604,7 @@ class PAN2Pipeline(
         )
         condition_latents = self.prepare_condition_latents(latents, image, height, width).to(dtype)
 
-        # PAN2 samples on uniformly spaced sigmas from 1 down to (excluding) 0; the scheduler applies the shift.
+        # PAN 2 samples on uniformly spaced sigmas from 1 down to (excluding) 0; the scheduler applies the shift.
         sigmas = np.linspace(1.0, 0.0, num_steps + 1)[:-1]
         self.scheduler.set_timesteps(sigmas=sigmas, device=device)
         timesteps = self.scheduler.timesteps

@@ -276,7 +276,7 @@ _EXTRA_SPECS: dict[str, dict[str, Any]] = {
             "MiniMaxH3ModularPipeline",
         )
     },
-    # PAN2 scales and center crops the first frame to the requested size itself.
+    # PAN 2 scales and center crops the first frame to the requested size itself.
     "PAN2ModularPipeline": {
         "reference_image_size_resolver": _always_preserve_reference_image_size,
         "video_generation_defaults_builder": get_pan2_video_generation_defaults,

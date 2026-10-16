@@ -1,6 +1,6 @@
-# PAN2
+# PAN 2
 
-> Text-to-video and image-to-video generation with PAN2
+> Text-to-video and image-to-video generation with PAN 2
 
 ## Summary
 
@@ -13,7 +13,7 @@
 
 ## Overview
 
-**PAN2** is a foundation world model that simulates how a scene evolves under a
+**PAN 2** is a foundation world model that simulates how a scene evolves under a
 time-grounded plan of actions and camera movements. Its 29B generative
 simulator is a dual-stream multimodal diffusion transformer (MMDiT): the prompt
 is encoded into a continuous state stream, and the state and video streams,
@@ -32,12 +32,12 @@ text-to-video (T2V).
 | Longest output | 481 frames (20 s) at 24 fps |
 | Size | `height` and `width` multiples of 32 |
 | Frame count | `num_frames` of the form `4k+1` (`duration_sec * 24 + 1` for whole seconds) |
-| Sampling | 50 steps and CFG 3.0 by default; PAN2's own flow-matching schedule |
+| Sampling | 50 steps and CFG 3.0 by default; PAN 2's own flow-matching schedule |
 | Video input | Not supported |
 
 ## Prompt format
 
-PAN2 needs a structured prompt. It is trained on the captions written by its
+PAN 2 needs a structured prompt. It is trained on the captions written by its
 [reasoning backbone](https://huggingface.co/IFM/PAN2#reasoning-backbone), and
 expects the prompt as that caption serialized to
 **compact one-line JSON** (`json.dumps(caption, ensure_ascii=False,
@@ -71,7 +71,7 @@ and negative prompt from `prompt.json` and `negative_prompt.json`
 
 ## Guardrails
 
-PAN2 runs guardrails on the prompt and the generated video, and they may block
+PAN 2 runs guardrails on the prompt and the generated video, and they may block
 a request with HTTP 400. They need the `pan2-guardrail` package:
 
 ```bash
@@ -105,7 +105,7 @@ adds its own copy. Recipes for 80 GB ([PAN2-H100](PAN2-H100.md)) and 48 GB
 On ≥141 GB GPUs:
 
 ```bash
-pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN2 guardrails
+pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN 2 guardrails
 
 # 1 GPU
 vllm serve IFM/PAN2 --omni --port 8000
@@ -181,7 +181,7 @@ for example `--cfg-parallel-size 2 --ulysses-degree 2`.
 
 ## Request-scoped quality
 
-PAN2 can switch Cache-DiT per request without a startup option:
-`-F 'quality=lossless'` runs the reference path, `-F 'quality=high'` PAN2's
+PAN 2 can switch Cache-DiT per request without a startup option:
+`-F 'quality=lossless'` runs the reference path, `-F 'quality=high'` PAN 2's
 conservative Cache-DiT profile. `high` is about 1.3x faster than `lossless`;
 the speedup depends on the prompt and the parallel configuration.

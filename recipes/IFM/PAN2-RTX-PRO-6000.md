@@ -1,4 +1,4 @@
-# PAN2 on RTX PRO 6000 Blackwell
+# PAN 2 on RTX PRO 6000 Blackwell
 
 This recipe runs [PAN2](PAN2.md) text-to-video and image-to-video on 96 GB GPUs
 (RTX PRO 6000 Blackwell (96 GB)). The DiT fits on one 96 GB GPU once the
@@ -19,7 +19,7 @@ frames. Peak memory is per GPU (first GPU / others).
 No offload. The guardrail models move to the GPU only for their checks.
 
 ```bash
-pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN2 guardrails
+pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN 2 guardrails
 vllm serve IFM/PAN2 --omni --port 8091 \
   --stage-overrides '{"0": {"model_config": {"offload_guardrail_models": true}}}'
 ```
@@ -31,7 +31,7 @@ GPU. CFG parallelism (`--cfg-parallel-size 2` with the guardrails offloaded)
 also fits, but peaked at 93.4 GiB, leaving about 2 GiB of headroom.
 
 ```bash
-pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN2 guardrails
+pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN 2 guardrails
 vllm serve IFM/PAN2 --omni --port 8091 \
   --num-gpus 2 \
   --tensor-parallel-size 2 \

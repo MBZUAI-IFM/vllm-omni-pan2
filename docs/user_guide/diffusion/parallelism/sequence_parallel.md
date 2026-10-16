@@ -169,7 +169,7 @@ In `DiffusionParallelConfig`:
 **Notes:**
 - Total sequence parallel size equals to `ulysses_degree × ring_degree`
 - Degrees must evenly divide the sequence length for optimal performance (or use `ulysses_mode="advanced_uaa"` for Ulysses-SP)
-- `mask_sp_padding` is an experimental feature, currently only supported by `Wan2.2`, `Wan2.2 Vace`, `Qwen-Image`, `Flux 2`, `HunyuanVideo 1.5`, and `PAN2`
+- `mask_sp_padding` is an experimental feature, currently only supported by `Wan2.2`, `Wan2.2 Vace`, `Qwen-Image`, `Flux 2`, `HunyuanVideo 1.5`, and `PAN 2`
 
 
 ## Best Practices

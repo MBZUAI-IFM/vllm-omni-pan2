@@ -1,7 +1,7 @@
 # Image-To-Video
 
 This shared example generates videos from images with VACE, Wan2.2, LTX-2,
-HunyuanVideo-1.5, SANA-Video, Cosmos3, MAGI-2, Kandinsky 6, PAN2, and other compatible pipelines.
+HunyuanVideo-1.5, SANA-Video, Cosmos3, MAGI-2, Kandinsky 6, PAN 2, and other compatible pipelines.
 
 - `image_to_video.py`: command-line script for single video generation with advanced options.
 
@@ -235,7 +235,7 @@ python image_to_video.py \
 See the [LTX-2 recipe](../../../recipes/LTX/LTX-2.md) for all checkpoints,
 pipeline selection, T2V, defaults, and advanced options.
 
-### PAN2
+### PAN 2
 
 ```bash
 python image_to_video.py \
@@ -245,8 +245,8 @@ python image_to_video.py \
   --output pan2_i2v_output.mp4
 ```
 
-PAN2 needs a structured prompt; the plain prompt above only shows the command.
-See the [PAN2 recipe](../../../recipes/IFM/PAN2.md) for details.
+PAN 2 needs a structured prompt; the plain prompt above only shows the command.
+See the [PAN 2 recipe](../../../recipes/IFM/PAN2.md) for details.
 
 ### SANA-Video-2B
 

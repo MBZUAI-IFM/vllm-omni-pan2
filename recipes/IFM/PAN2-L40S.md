@@ -1,4 +1,4 @@
-# PAN2 on L40S and 48 GB GPUs
+# PAN 2 on L40S and 48 GB GPUs
 
 This recipe runs [PAN2](PAN2.md) text-to-video and image-to-video on 48 GB GPUs
 (L40S, RTX 6000 Ada, RTX A6000). All profiles use distributed layerwise offload;
@@ -26,7 +26,7 @@ re-measure before raising it.
 leaving under 3 GiB of headroom.
 
 ```bash
-pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN2 guardrails
+pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN 2 guardrails
 vllm serve IFM/PAN2 --omni --port 8091 \
   --vae-use-tiling \
   --enable-distributed-layerwise-offload --dlo-no-use-allgather --dlo-resident-layers 10 \
@@ -39,7 +39,7 @@ vllm serve IFM/PAN2 --omni --port 8091 \
 12 of the 48 DiT blocks stay on each GPU. 32 resident blocks peaked at 42.0 GiB.
 
 ```bash
-pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN2 guardrails
+pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN 2 guardrails
 vllm serve IFM/PAN2 --omni --port 8091 \
   --num-gpus 4 \
   --tensor-parallel-size 2 --cfg-parallel-size 2 \

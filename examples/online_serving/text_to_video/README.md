@@ -10,7 +10,7 @@ This example demonstrates how to deploy text-to-video models for online video ge
 | Wan2.1 T2V (14B) | `Wan-AI/Wan2.1-T2V-14B-Diffusers` |
 | Wan2.2 T2V | `Wan-AI/Wan2.2-T2V-A14B-Diffusers` |
 | LTX-2 | `Lightricks/LTX-2` |
-| PAN2 | `IFM/PAN2` |
+| PAN 2 | `IFM/PAN2` |
 | Helios (Base / Mid / Distilled) | `BestWishYsh/Helios-Base`, `Helios-Mid`, `Helios-Distilled` |
 | SANA-Video 2B (480p) | `Efficient-Large-Model/SANA-Video_2B_480p_diffusers` |
 | SANA-Video 2B (720p) | `Efficient-Large-Model/SANA-Video_2B_720p_diffusers` |
@@ -261,7 +261,7 @@ vllm serve Lightricks/LTX-2 --omni --port 8098
 See the [LTX-2 recipe](../../../recipes/LTX/LTX-2.md) for all checkpoints,
 pipeline selection, requests, defaults, and advanced options.
 
-## PAN2
+## PAN 2
 
 ```bash
 # One GPU with ~100 GiB free; see the recipe for multi-GPU and smaller GPUs.
@@ -277,8 +277,8 @@ video_id=$(echo "$create_response" | jq -r '.id')
 ```
 
 Poll and download the result as shown in [Poll Until
-Complete](#poll-until-complete). PAN2 needs a structured prompt; the plain
-prompt above only shows the command. See the [PAN2
+Complete](#poll-until-complete). PAN 2 needs a structured prompt; the plain
+prompt above only shows the command. See the [PAN 2
 recipe](../../../recipes/IFM/PAN2.md) for details.
 
 ## Helios

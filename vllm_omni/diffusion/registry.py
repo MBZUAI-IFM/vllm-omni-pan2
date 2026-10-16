@@ -326,7 +326,7 @@ _DIFFUSION_MODELS = {
         "pipeline_hunyuan_video_1_5_i2v",
         "HunyuanVideo15I2VPipeline",
     ),
-    # PAN2 checkpoints are Modular Diffusers repositories: `modular_model_index.json` declares this class.
+    # PAN 2 checkpoints are Modular Diffusers repositories: `modular_model_index.json` declares this class.
     "PAN2ModularPipeline": (
         "pan2",
         "pipeline_pan2",

@@ -4,7 +4,7 @@ Source <https://github.com/vllm-project/vllm-omni/tree/main/examples/offline_inf
 
 
 This example demonstrates how to generate videos from images using Wan2.2,
-LTX-2, HunyuanVideo-1.5, SANA-Video, and PAN2 Image-to-Video models with
+LTX-2, HunyuanVideo-1.5, SANA-Video, and PAN 2 Image-to-Video models with
 vLLM-Omni's offline inference API.
 
 ## Local CLI Usage
@@ -66,7 +66,7 @@ python image_to_video.py \
 See the [LTX-2 recipe](../../../../recipes/LTX/LTX-2.md) for all checkpoints,
 pipeline selection, T2V, defaults, and advanced options.
 
-### PAN2
+### PAN 2
 
 ```bash
 python image_to_video.py \
@@ -76,8 +76,8 @@ python image_to_video.py \
   --output pan2_i2v_output.mp4
 ```
 
-PAN2 needs a structured prompt; the plain prompt above only shows the command.
-See the [PAN2 recipe](../../../../recipes/IFM/PAN2.md) for details.
+PAN 2 needs a structured prompt; the plain prompt above only shows the command.
+See the [PAN 2 recipe](../../../../recipes/IFM/PAN2.md) for details.
 
 ### SANA-Video-2B
 

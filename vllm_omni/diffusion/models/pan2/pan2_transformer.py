@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
-"""PAN2 video generation transformer, ported from diffusers ``PAN2Transformer3DModel``."""
+"""PAN 2 video generation transformer, ported from diffusers ``PAN2Transformer3DModel``."""
 
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
@@ -360,7 +360,7 @@ class PAN2TransformerBlock(nn.Module):
 
 
 class PAN2Transformer3DModel(nn.Module):
-    """PAN2 video generation transformer with tensor-parallel joint-attention blocks.
+    """PAN 2 video generation transformer with tensor-parallel joint-attention blocks.
 
     The video input stacks the noisy latents, the conditioning latents and a one-channel conditioning mask along
     channels, so the same model serves text-to-video and image-to-video.

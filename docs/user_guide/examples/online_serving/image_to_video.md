@@ -274,7 +274,7 @@ while true; do
 done
 ```
 
-## PAN2
+## PAN 2
 
 ```bash
 # One GPU with ~100 GiB free; see the recipe for multi-GPU and smaller GPUs.
@@ -291,8 +291,8 @@ video_id=$(echo "$create_response" | jq -r '.id')
 ```
 
 Poll and download the result as shown in [Poll Until
-Complete](#poll-until-complete). PAN2 needs a structured prompt; the plain
-prompt above only shows the command. See the [PAN2
+Complete](#poll-until-complete). PAN 2 needs a structured prompt; the plain
+prompt above only shows the command. See the [PAN 2
 recipe](../../../../recipes/IFM/PAN2.md) for details.
 
 ## Example materials

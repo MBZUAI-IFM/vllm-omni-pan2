@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
-"""Offline E2E test for PAN2 text-to-video and image-to-video on a tiny random-weight checkpoint.
+"""Offline E2E test for PAN 2 text-to-video and image-to-video on a tiny random-weight checkpoint.
 
 Set ``VLLM_OMNI_PAN2_TINY_MODEL`` to run against a local copy of the tiny checkpoint.
 """
