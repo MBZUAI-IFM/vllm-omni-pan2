@@ -9,7 +9,6 @@ import torch
 from cache_dit import ForwardPattern
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps, get_1d_rotary_pos_embed
 from torch import nn
-from vllm.logger import init_logger
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import MergedColumnParallelLinear, QKVParallelLinear, RowParallelLinear
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
@@ -36,7 +35,6 @@ from vllm_omni.diffusion.models.flux.flux_transformer import FeedForward
 if TYPE_CHECKING:
     from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 
-logger = init_logger(__name__)
 
 # Fuse the video Q/K RMSNorm + RoPE only when a call covers at least this many tokens; below it the host launch
 # overhead dominates. Override with VLLM_OMNI_FUSED_QK_NORM_ROPE_MIN_TOKENS (0 = always fuse).
@@ -406,7 +404,6 @@ class PAN2Transformer3DModel(nn.Module):
         quant_config: "QuantizationConfig | None" = None,
     ):
         super().__init__()
-        self.parallel_config = od_config.parallel_config
         self.patch_size = tuple(patch_size)
         inner_dim = num_attention_heads * attention_head_dim
 
@@ -447,17 +444,15 @@ class PAN2Transformer3DModel(nn.Module):
             inner_dim, self.patch_size[0] * self.patch_size[1] * self.patch_size[2] * out_channels
         )
 
-    def _sp_padding_mask(self, batch_size: int, device: torch.device) -> torch.Tensor | None:
-        """Mask for the video padding sequence parallelism adds, when ``mask_sp_padding`` asks for it."""
+    @staticmethod
+    def _sp_padding_mask(batch_size: int, device: torch.device) -> torch.Tensor | None:
+        """Mask for the video padding sequence parallelism adds.
+
+        Always built, regardless of ``mask_sp_padding``: unmasked padding tokens would join every joint attention
+        and drift from the single-GPU output (e.g. 704x1248 at ``--usp 4`` always pads 2 tokens).
+        """
         ctx = get_forward_context()
         if ctx.sp_original_seq_len is None or ctx.sp_padding_size == 0:
-            return None
-        if not self.parallel_config.mask_sp_padding:
-            logger.warning_once(
-                "SP auto-padding added %d video token(s) that are not masked from attention "
-                "(mask_sp_padding=False); set parallel_config.mask_sp_padding=True for strict masking.",
-                ctx.sp_padding_size,
-            )
             return None
         hidden_states_mask = torch.ones(
             batch_size, ctx.sp_original_seq_len + ctx.sp_padding_size, dtype=torch.bool, device=device
