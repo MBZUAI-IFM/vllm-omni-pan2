@@ -14,7 +14,7 @@ from vllm_omni.model_extras.video_generation import VideoGenerationDefaults
 def get_pan2_video_generation_defaults(
     extra_body: Mapping[str, Any] | None = None,
 ) -> VideoGenerationDefaults:
-    """PAN 2's default geometry: 704x1248, 313 frames (13 s) at 24 fps, 50 steps, CFG 3.
+    """PAN 2's default geometry: 704x1248, 313 frames (13 s) at 24 fps, 50 steps, CFG 2.5.
 
     Any size that is a multiple of 32 and any ``4k+1`` frame count can be requested explicitly.
     """
@@ -25,7 +25,7 @@ def get_pan2_video_generation_defaults(
         num_frames=313,
         num_inference_steps=50,
         fps=24.0,
-        guidance_scale=3.0,
+        guidance_scale=2.5,
         output="pan2_output.mp4",
         dimension_multiple=32,
         # ``None`` lets the pipeline apply its own negative prompt default.

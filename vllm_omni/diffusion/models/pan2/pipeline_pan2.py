@@ -404,6 +404,7 @@ class PAN2Pipeline(
         self.video_processor = VideoProcessor(vae_scale_factor=self.vae_scale_factor_spatial)
 
         self._guidance_scale: float | None = None
+        self._image_conditioned = False
         self._num_timesteps: int | None = None
         self._current_timestep: torch.Tensor | None = None
 
@@ -507,6 +508,20 @@ class PAN2Pipeline(
     def predict_noise(self, **kwargs: Any) -> torch.Tensor:
         return self.transformer(**kwargs)
 
+    def combine_cfg_noise(
+        self,
+        positive_noise_pred: torch.Tensor,
+        negative_noise_pred: torch.Tensor,
+        true_cfg_scale: float,
+        cfg_normalize: bool = False,
+        kwargs: dict[str, Any] | None = None,
+    ) -> torch.Tensor:
+        noise_pred = super().combine_cfg_noise(positive_noise_pred, negative_noise_pred, true_cfg_scale, cfg_normalize)
+        if self._image_conditioned:
+            # The image-conditioned first latent frame takes the conditional prediction, without guidance.
+            noise_pred[:, :, :1] = positive_noise_pred[0][:, :, :1]
+        return noise_pred
+
     @contextmanager
     def _resident_dit_layers_on_device(self) -> Iterator[None]:
         """Keep the resident DiT layers of distributed layerwise offload on the device while denoising."""
@@ -523,7 +538,7 @@ class PAN2Pipeline(
         self,
         req: DiffusionRequestBatch,
         num_inference_steps: int = 50,
-        guidance_scale: float = 3.0,
+        guidance_scale: float = 2.5,
         height: int = PAN2_DEFAULT_HEIGHT,
         width: int = PAN2_DEFAULT_WIDTH,
         num_frames: int = PAN2_DEFAULT_NUM_FRAMES,
@@ -551,6 +566,7 @@ class PAN2Pipeline(
             image = PIL.Image.open(image)
         if image is not None:
             image = cast(PIL.Image.Image, image).convert("RGB")
+        self._image_conditioned = image is not None
 
         output_type = sampling_params.output_type or output_type
         height = sampling_params.height or height

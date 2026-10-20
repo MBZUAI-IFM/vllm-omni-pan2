@@ -78,9 +78,11 @@ def test_pan2_generates_requested_video(omni_runner: OmniRunner, image: Image.Im
 
 @hardware_test(res={"cuda": "L4"}, num_cards=1)
 @pytest.mark.parametrize("image", [None, CONDITION_IMAGE], ids=["t2v", "i2v"])
-def test_pan2_guidance_applies_to_every_frame(omni_runner: OmniRunner, image: Image.Image | None):
+def test_pan2_guidance_applies_to_generated_frames(omni_runner: OmniRunner, image: Image.Image | None):
     unguided = _generate(omni_runner, image=image, guidance_scale=1.0)
-    assert _max_frame_diff(_generate(omni_runner, image=image), unguided).min() > 4
+    # Image-to-video does not guide the first frame, which the image conditions.
+    first_generated_frame = 0 if image is None else 1
+    assert _max_frame_diff(_generate(omni_runner, image=image), unguided)[first_generated_frame:].min() > 4
 
 
 # Keep this test last: a rejected request stops the offline engine that the module's tests share.

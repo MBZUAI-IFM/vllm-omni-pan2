@@ -32,7 +32,7 @@ text-to-video (T2V).
 | Longest output | 481 frames (20 s) at 24 fps |
 | Size | `height` and `width` multiples of 32 |
 | Frame count | `num_frames` of the form `4k+1` (`duration_sec * 24 + 1` for whole seconds) |
-| Sampling | 50 steps and CFG 3.0 by default; PAN 2's own flow-matching schedule |
+| Sampling | 50 steps and CFG 2.5 by default; PAN 2's own flow-matching schedule |
 | Video input | Not supported |
 
 ## Prompt format
@@ -134,7 +134,7 @@ curl -X POST http://localhost:8000/v1/videos/sync \
   -F "num_frames=241" \
   -F "fps=24" \
   -F "num_inference_steps=50" \
-  -F "guidance_scale=3.0" \
+  -F "guidance_scale=2.5" \
   -F "seed=42" \
   --output pan2_t2v.mp4
 ```
@@ -151,7 +151,7 @@ curl -X POST http://localhost:8000/v1/videos/sync \
   -F "num_frames=241" \
   -F "fps=24" \
   -F "num_inference_steps=50" \
-  -F "guidance_scale=3.0" \
+  -F "guidance_scale=2.5" \
   -F "seed=42" \
   --output pan2_i2v.mp4
 ```
