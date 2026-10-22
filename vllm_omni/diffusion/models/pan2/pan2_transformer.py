@@ -305,9 +305,11 @@ class PAN2TransformerBlock(nn.Module):
         prefix: str = "",
     ):
         super().__init__()
-        self.norm1 = AdaLayerNormZero(dim, quant_config=quant_config, prefix=f"{prefix}.norm1")
+        # The modulation runs in float32 and is not quantized.
+        self.norm1 = AdaLayerNormZero(dim, quant_config=None, prefix=f"{prefix}.norm1")
+        self.norm1.linear.float()
         self.norm1_context = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
-        self.scale_shift_table_context = nn.Parameter(torch.zeros(6 * dim))
+        self.scale_shift_table_context = nn.Parameter(torch.zeros(6 * dim, dtype=torch.float32))
 
         self.attn = PAN2Attention(
             dim, num_attention_heads, attention_head_dim, eps, quant_config=quant_config, prefix=f"{prefix}.attn"
@@ -328,7 +330,9 @@ class PAN2TransformerBlock(nn.Module):
         image_rotary_emb: tuple[torch.Tensor, torch.Tensor, torch.Tensor | None],
         hidden_states_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=temb)
+        # The norms, their shift/scale and the gated residuals run in float32, like the modulation.
+        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states.float(), emb=temb)
+        norm_hidden_states = norm_hidden_states.type_as(hidden_states)
         (
             context_shift_msa,
             context_scale_msa,
@@ -336,24 +340,32 @@ class PAN2TransformerBlock(nn.Module):
             context_shift_mlp,
             context_scale_mlp,
             context_gate_mlp,
-        ) = self.scale_shift_table_context.to(temb.dtype).chunk(6, dim=-1)
+        ) = self.scale_shift_table_context.chunk(6, dim=-1)
         norm_encoder_hidden_states = (
-            self.norm1_context(encoder_hidden_states) * (1 + context_scale_msa) + context_shift_msa
-        )
+            self.norm1_context(encoder_hidden_states.float()) * (1 + context_scale_msa) + context_shift_msa
+        ).type_as(encoder_hidden_states)
 
         attn_output, context_attn_output = self.attn(
             norm_hidden_states, norm_encoder_hidden_states, image_rotary_emb, hidden_states_mask
         )
-        hidden_states = hidden_states + attn_output * gate_msa.unsqueeze(1)
-        encoder_hidden_states = encoder_hidden_states + context_attn_output * context_gate_msa
-
-        norm_hidden_states = self.norm2(hidden_states) * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
-        norm_encoder_hidden_states = (
-            self.norm2_context(encoder_hidden_states) * (1 + context_scale_mlp) + context_shift_mlp
+        hidden_states = (hidden_states.float() + attn_output * gate_msa.unsqueeze(1)).type_as(hidden_states)
+        encoder_hidden_states = (encoder_hidden_states.float() + context_attn_output * context_gate_msa).type_as(
+            encoder_hidden_states
         )
 
-        hidden_states = hidden_states + self.ff(norm_hidden_states) * gate_mlp.unsqueeze(1)
-        encoder_hidden_states = encoder_hidden_states + self.ff_context(norm_encoder_hidden_states) * context_gate_mlp
+        norm_hidden_states = (
+            self.norm2(hidden_states.float()) * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        ).type_as(hidden_states)
+        norm_encoder_hidden_states = (
+            self.norm2_context(encoder_hidden_states.float()) * (1 + context_scale_mlp) + context_shift_mlp
+        ).type_as(encoder_hidden_states)
+
+        ff_output = self.ff(norm_hidden_states)
+        context_ff_output = self.ff_context(norm_encoder_hidden_states)
+        hidden_states = (hidden_states.float() + ff_output * gate_mlp.unsqueeze(1)).type_as(hidden_states)
+        encoder_hidden_states = (encoder_hidden_states.float() + context_ff_output * context_gate_mlp).type_as(
+            encoder_hidden_states
+        )
         return hidden_states, encoder_hidden_states
 
 
@@ -413,7 +425,7 @@ class PAN2Transformer3DModel(nn.Module):
         )
 
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
-        self.time_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=inner_dim)
+        self.time_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=inner_dim).float()
 
         self.context_embedder = nn.Sequential(RMSNorm(text_embed_dim, eps=1e-5), nn.Linear(text_embed_dim, inner_dim))
         self.context_refiner = nn.ModuleList(
@@ -440,6 +452,7 @@ class PAN2Transformer3DModel(nn.Module):
         )
 
         self.norm_out = AdaLayerNormContinuous(inner_dim, inner_dim, elementwise_affine=False, eps=1e-6)
+        self.norm_out.linear.float()
         self.proj_out = nn.Linear(
             inner_dim, self.patch_size[0] * self.patch_size[1] * self.patch_size[2] * out_channels
         )
@@ -494,7 +507,8 @@ class PAN2Transformer3DModel(nn.Module):
             rope_table = torch.cat((cos, sin), dim=-1)
         image_rotary_emb = (cos, sin, rope_table)
 
-        temb = self.time_embedder(self.time_proj(timestep).to(hidden_states.dtype))
+        timesteps_proj = self.time_proj(timestep).to(self.time_embedder.linear_1.weight.dtype)
+        temb = self.time_embedder(timesteps_proj)
 
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
         for block in self.context_refiner:
@@ -506,7 +520,7 @@ class PAN2Transformer3DModel(nn.Module):
                 hidden_states, encoder_hidden_states, temb, image_rotary_emb, hidden_states_mask
             )
 
-        hidden_states = self.norm_out(hidden_states, temb)
+        hidden_states = self.norm_out(hidden_states.type_as(temb), temb).type_as(hidden_states)
         hidden_states = self.proj_out(hidden_states)
 
         hidden_states = hidden_states.reshape(
