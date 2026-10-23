@@ -388,6 +388,8 @@ class PAN2Transformer3DModel(nn.Module):
         "add_kv_proj": ["add_q_proj", "add_k_proj", "add_v_proj"],
     }
     _hsdp_shard_conditions = [is_transformer_block_module]
+    # Keep the float32 modulation in float32 under HSDP instead of all-gathering it in the bf16 param dtype.
+    _hsdp_preserve_parameter_dtypes = True
     _sp_plan = {
         "rope": {
             0: SequenceParallelInput(split_dim=0, expected_dims=2, split_output=True, auto_pad=True),
