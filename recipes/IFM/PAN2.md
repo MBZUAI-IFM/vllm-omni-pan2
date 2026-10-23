@@ -65,9 +65,11 @@ timeline of events:
 }
 ```
 
-The negative prompt uses the same format. The examples below read the prompt
-and negative prompt from `prompt.json` and `negative_prompt.json`
-(`i2v_prompt.json` and `i2v_negative_prompt.json` for image-to-video).
+The negative prompt uses the same format. Without one, or with an empty one,
+PAN 2 uses the negative prompt it was released with, its time ranges set to
+the clip's duration. The examples below read the prompt and negative prompt
+from `prompt.json` and `negative_prompt.json` (`i2v_prompt.json` and
+`i2v_negative_prompt.json` for image-to-video).
 
 ## Guardrails
 
