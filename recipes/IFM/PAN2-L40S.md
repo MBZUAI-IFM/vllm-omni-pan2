@@ -17,13 +17,12 @@ re-measure before raising it.
 
 | GPUs | Peak memory (481 frames) |
 | --- | ---: |
-| 1 GPU | 37.4 GiB |
-| 4 GPUs | 28.2 / 27.6 GiB |
+| 1 GPU | 40.1 GiB |
+| 4 GPUs | 35.3 / 34.7 GiB |
 
 ## 1 GPU
 
-10 of the 48 DiT blocks stay on the GPU. 14 resident blocks peaked at 42.2 GiB,
-leaving under 3 GiB of headroom.
+10 of the 48 DiT blocks stay on the GPU.
 
 ```bash
 pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN 2 guardrails
@@ -36,7 +35,7 @@ vllm serve IFM/PAN2 --omni --port 8091 \
 
 ## 4 GPUs
 
-12 of the 48 DiT blocks stay on each GPU. 32 resident blocks peaked at 42.0 GiB.
+12 of the 48 DiT blocks stay on each GPU.
 
 ```bash
 pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN 2 guardrails

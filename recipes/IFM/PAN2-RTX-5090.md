@@ -17,13 +17,12 @@ re-measure before raising it.
 
 | GPUs | Peak memory (481 frames) |
 | --- | ---: |
-| 1 GPU | 28.3 GiB |
-| 2 GPUs | 27.7 / 24.3 GiB |
+| 1 GPU | 29.8 GiB |
+| 2 GPUs | 29.5 / 28.9 GiB |
 
 ## 1 GPU
 
-No resident blocks. With 2 resident blocks the peak was 29.3 GiB, about 2.5 GiB
-below the card's usable memory.
+No resident blocks. The peak is about 2 GiB below the card's usable memory.
 
 ```bash
 pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN 2 guardrails
@@ -36,8 +35,7 @@ vllm serve IFM/PAN2 --omni --port 8091 \
 
 ## 2 GPUs
 
-8 resident blocks; 16 peaked at 30.5 GiB. This profile was also checked with
-image-to-video through `vllm serve`.
+6 resident blocks; 8 peaked at 31.3 GiB, too close to the card's usable memory.
 
 ```bash
 pip install git+https://github.com/ifm-ai/pan2-guardrail  # PAN 2 guardrails
@@ -45,7 +43,7 @@ vllm serve IFM/PAN2 --omni --port 8091 \
   --num-gpus 2 \
   --tensor-parallel-size 2 \
   --vae-patch-parallel-size 2 --vae-parallel-mode tile --vae-use-tiling \
-  --enable-distributed-layerwise-offload --dlo-no-use-allgather --dlo-resident-layers 8 \
+  --enable-distributed-layerwise-offload --dlo-no-use-allgather --dlo-resident-layers 6 \
   --enforce-eager \
   --stage-overrides '{"0": {"model_config": {"offload_guardrail_models": true}}}'
 ```
