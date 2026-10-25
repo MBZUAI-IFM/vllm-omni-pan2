@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import os
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
@@ -460,6 +461,14 @@ def _check_pan2_request(
         raise OmniClientError(
             "PAN 2 uses its own flow-matching schedule; custom `sigmas`/`timesteps` are not supported."
         )
+    flow_shift = (sampling_params.extra_args or {}).get("flow_shift")
+    if flow_shift is not None and (
+        isinstance(flow_shift, bool)
+        or not isinstance(flow_shift, (int, float))
+        or not math.isfinite(flow_shift)
+        or flow_shift <= 0
+    ):
+        raise OmniClientError(f"PAN 2 `flow_shift` must be a positive number, got {flow_shift!r}.")
     multi_modal_data = (prompt.get("multi_modal_data") or {}) if isinstance(prompt, dict) else {}
     if multi_modal_data.get("video") is not None:
         raise OmniClientError("PAN 2 does not accept video input; pass a single first-frame image for image-to-video.")
@@ -537,6 +546,8 @@ class PAN2Pipeline(
         if od_config.flow_shift is not None:
             # The scheduler exposes `shift` as a read-only property.
             self.scheduler._shift = od_config.flow_shift
+        # The flow shift of the requests that do not set their own `flow_shift`.
+        self.default_flow_shift = self.scheduler.shift
 
         transformer_kwargs = get_transformer_config_kwargs(od_config.tf_model_config, PAN2Transformer3DModel)
         self.transformer = PAN2Transformer3DModel(
@@ -787,7 +798,10 @@ class PAN2Pipeline(
         )
         condition_latents = self.prepare_condition_latents(latents, image, height, width).to(dtype)
 
-        # PAN 2 samples on uniformly spaced sigmas from 1 down to (excluding) 0; the scheduler applies the shift.
+        # PAN 2 samples on uniformly spaced sigmas from 1 down to (excluding) 0; the scheduler applies the shift, the
+        # request's `flow_shift` if it sets one.
+        flow_shift = (sampling_params.extra_args or {}).get("flow_shift")
+        self.scheduler._shift = float(flow_shift) if flow_shift is not None else self.default_flow_shift
         sigmas = np.linspace(1.0, 0.0, num_steps + 1)[:-1]
         self.scheduler.set_timesteps(sigmas=sigmas, device=device)
         timesteps = self.scheduler.timesteps
